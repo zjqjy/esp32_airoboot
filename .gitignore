@@ -76,3 +76,9 @@ Desktop.ini
 *.workspace # General workspace files, can be from various tools
 *.suo       # Visual Studio Solution User Options
 *.sln.docstates # Visual Studio
+
+# EM 项目管理工具
+.em/
+
+# VSCode 本机配置（含串口号、工具链绝对路径）
+.vscode/
