@@ -8,10 +8,10 @@
 | 外设 | 信号 | GPIO | 状态 |
 |------|------|------|------|
 | WS2812B | DIN | 48 | ✅ 已验证 |
-| LCD | MOSI / SCLK / CS / DC / RST / BL | ? | ⬜ 待原理图 |
-| 触摸 | SDA / SCL / INT / RST | ? | ⬜ 待原理图 |
-| MAX98357 | BCLK / LRCK / DIN / GAIN / SD | ? | ⬜ 待原理图 |
-| INMP441 | SCK / WS / SD / L_R | ? | ⬜ 待原理图 |
+| LCD | MOSI=3 / SCLK=2 / CS=7 / DC=18 / RST=21 / BLK=1 | - | ✅ S2-A 已点亮 (偏移20, 240x280, 大端) |
+| 触摸 | SDA=4 / SCL=5 / INT=6 / RST=10 | - | 接线✅, 驱动待 S2-C |
+| MAX98357 | BCLK / LRCK / DIN / GAIN / SD | ? | ⬜ 待原理图 (D3) |
+| INMP441 | SCK / WS / SD / L_R | ? | ⬜ 待原理图 (D4) |
 
 ## D1. LCD 显示（ST7789 · SPI）— 「点亮第一块屏」
 

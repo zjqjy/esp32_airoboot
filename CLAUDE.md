@@ -21,8 +21,13 @@
 | 外设 | 引脚 | 来源 |
 |------|------|------|
 | WS2812B DIN | GPIO48 | 原理图 U11，S1 已点灯 |
+| LCD SCK/MOSI/CS | 2 / 3 / 7 | SPI2，S2-A 已点亮 |
+| LCD DC/RST/BLK | 18 / 21 / 1 | RST 例程19因USB冲突改21；BLK=丝印PWR |
+| 触摸 SDA/SCL/INT/RST | 4 / 5 / 6 / 10 | CST816@0x15，接线已接，S2-C 验驱动 |
+| USB D-/D+ | 19 / 20 | 禁占；STRAP: 0/45/46；PSRAM: 26~37 禁用 |
 
-> 待验证：I2S0(mic)、I2S1(功放)、SPI(LCD)、I2C(触摸) 引脚 → 补充原理图后登记
+> ST7789 关键结论：玻璃 240x280，可视区=显存[20..299]（参考代码藏 y+20 偏移）；RGB565 需大端发送
+> 待验证：I2S0(mic)、I2S1(功放) 引脚 → 补充原理图后登记
 
 ## 调试惯例（强制执行）
 - 串口监视：`idf.py monitor`，日志 TAG 按模块命名（如 ws2812b / audio_in / lvgl）
@@ -41,3 +46,4 @@
 - **[2026-09-14]** Flash 分区改单 factory（砍双 OTA）：无存量设备、开发靠 USB，5MB 让给 assets 语音包；开源发布做远程升级时再切双 OTA
 - **[2026-09-14]** MVP 方案定稿（docs/MVP.md）：4 状态闭环（working/waiting/done/idle），砍麦克风+WiFi+触摸+图片资源，USB 串口直连 bridge，语音用预合成 WAV；M1 前置条件=确认 LCD 驱动 IC 和引脚
 - **[2026-09-14]** 执行顺序调整：先做全硬件驱动层 D1~D5（docs/BSP_PLAN.md，含 MVP 用不到的触摸/麦克风，自媒体逐期拍摄），后进 MVP 集成；引脚登记表维护在 BSP_PLAN.md
+- **[2026-09-14]** S2-A 验收通过（HVR-S2-A-01）：字节序大端发送 + 偏移20 两定论；视频素材已攒够（踩坑实录见 .em/problem-log.md 1~6 条）
