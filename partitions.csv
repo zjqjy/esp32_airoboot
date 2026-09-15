@@ -1,0 +1,6 @@
+# Name,   Type, SubType, Offset,  Size,     Flags
+# S3: 16MB flash 单 factory 布局 (决策 2026-09-14: 砍双 OTA, 5MB app + assets 存储区)
+nvs,      data, nvs,     0x9000,  0x6000,
+phy_init, data, phy,     0xf000,  0x1000,
+factory,  app,  factory, 0x10000, 5M,
+assets,   data, fat,     ,        10M,

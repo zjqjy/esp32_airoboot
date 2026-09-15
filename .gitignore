@@ -82,3 +82,6 @@ Desktop.ini
 
 # VSCode 本机配置（含串口号、工具链绝对路径）
 .vscode/
+
+# S3 生成的验收预览图 (anim_gif2c.py 可再生)
+main/cat/preview/

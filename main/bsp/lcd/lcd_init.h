@@ -19,7 +19,7 @@
 #define LCD_BLK_PIN    1    /* 转接板丝印 PWR = 背光使能 */
 
 #define LCD_SPI_HOST   SPI2_HOST
-#define LCD_SPI_MHZ    26   /* 起步保守值, S2-D 做 40/80 对比 */
+#define LCD_SPI_MHZ    40   /* S3-C 实测 26MHz 仅 7fps → 提 40; 若花屏回退 26 */
 
 /* ---- 分辨率终版(S2-A 对照参考代码定论) ----
  * 玻璃 240x280, 可视区 = 显存 [20..299] (上下各藏20行)
