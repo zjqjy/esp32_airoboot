@@ -86,3 +86,6 @@ Desktop.ini
 
 # S3 生成的验收预览图 (anim_gif2c.py 可再生)
 main/cat/preview/
+
+# lvgl-mcp 本机注册 (含绝对路径, 不入库)
+.mcp.json

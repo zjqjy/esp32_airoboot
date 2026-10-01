@@ -227,8 +227,14 @@ esp_err_t bsp_audio_out_play_wav(const char *path)
 
 /* ---------- 初始化 ---------- */
 
+static bool s_out_ready;
+
 esp_err_t bsp_audio_out_init(void)
 {
+    if (s_out_ready) {
+        return ESP_OK;                      /* 幂等: S6 自环也会调用, 双方只装一次 */
+    }
+
     /* 1. SD 引脚: 默认拉低 = 功放关断 0.6µA */
     gpio_config_t sd = {
         .pin_bit_mask = 1ULL << AUDIO_SD_PIN,

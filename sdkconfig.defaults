@@ -14,3 +14,6 @@ CONFIG_SPIRAM_SPEED_80M=y
 # S4: LVGL 屏上性能浮层 (fps/CPU%), 上板调试用, 定稿录像前可关
 CONFIG_LV_USE_SYSMON=y
 CONFIG_LV_USE_PERF_MONITOR=y
+
+# S6: 录音机界面中文 (LVGL 内置思源黑体 CJK 字库 (SIMSUN 已弃用), sdkconfig 已同步改)
+CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_16_CJK=y

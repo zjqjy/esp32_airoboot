@@ -16,3 +16,22 @@ config S5_AUDIO_60S_TEST
         长时间运行无断流/无爆音 (S5-B 验收项). 默认关.
 
 endmenu
+
+menu "S6 Mic"
+
+config S6_MIC_SELFTEST
+    bool "开机自检: 静默基线 + 说话电平对比 (S6-A 验收)"
+    default y
+    help
+        上电后采 2s 静默基线, 再采 2s 请对着麦克风说话;
+        RMS 显著升高 = INMP441 硬件通. 正式发布可关闭.
+
+config S6_MIC_ECHO_TEST
+    bool "触摸录音机: 单击屏幕录音/再击播放 (S6-C 验收, 需 S5 喇叭已接线)"
+    default y
+    help
+        全屏录音机界面 (状态大字 + 实时电平条): 单击开始录音, 再单击停止
+        并经 MAX98357 回放, 循环使用. 单段上限 10s (PSRAM), 回放软件增益 x8,
+        播放期间停麦 (半双工) 防啸叫. 猫动画暂停被本界面接管; 重启退出.
+
+endmenu

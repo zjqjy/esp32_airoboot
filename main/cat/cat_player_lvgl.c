@@ -301,3 +301,19 @@ void cat_player_lvgl_start(void)
     ESP_LOGI(TAG, "哭泣猫上线 (LVGL): %s (%dx%d, %d帧), 舞步 %s",
              a->name, a->w, a->h, a->n_frames, DANCE_NAME[dance]);
 }
+
+/* ---------- 全屏模式接管 (S6-C 录音机) ---------- */
+
+void cat_player_lvgl_pause(void)
+{
+    if (frame_timer) lv_timer_pause(frame_timer);
+    if (motion_timer) lv_timer_pause(motion_timer);
+    if (touch_timer) lv_timer_pause(touch_timer);
+}
+
+void cat_player_lvgl_resume(void)
+{
+    if (frame_timer) lv_timer_resume(frame_timer);
+    if (motion_timer) lv_timer_resume(motion_timer);
+    if (touch_timer) lv_timer_resume(touch_timer);
+}

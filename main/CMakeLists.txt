@@ -3,9 +3,12 @@
 #   (git 历史可回溯; 避免双驱动抢 SPI 总线)
 idf_component_register(
     SRCS "main.c" "led_strip_encoder.c"
+         "mic_recorder.c"
+         "fonts/lv_font_rec_16.c"
          "bsp/lcd_esp/lcd_esp.c"
          "bsp/lcd/touch.c"
          "bsp/audio/bsp_audio_out.c"
+         "bsp/audio/bsp_audio_in.c"
          "bsp/led/led_status.c"
          "cat/cat_player_lvgl.c" "cat/cat_lvgl_assets.c"
     INCLUDE_DIRS "." "bsp" "bsp/lcd" "bsp/lcd_esp" "bsp/led" "bsp/audio" "cat"

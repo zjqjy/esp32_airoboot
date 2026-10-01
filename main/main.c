@@ -4,6 +4,7 @@
  *       cat_player_lvgl(帧推进/舞步/触摸交互/泪滴彩蛋)
  * 交互: 单击切舞步 / 双击切猫 / 连点猫头趴地哭彩蛋 (S3-C 语义原样)
  * 复用: S1 WS2812 (bsp/led) + S2-C CST816 触摸 (bsp/lcd/touch.c)
+ * S5/S6: 喇叭 MAX98357 (bsp/audio) + 麦克风 INMP441 采集 + 触摸录音机 (mic_recorder)
  * 历史版本: S2/S3 自研渲染栈见 git 历史 (a0cecf1, f63dc8b)
  */
 #include "freertos/FreeRTOS.h"
@@ -17,6 +18,8 @@
 #include "led_status.h"
 #include "cat_player_lvgl.h"
 #include "bsp/audio/bsp_audio_out.h"
+#include "bsp/audio/bsp_audio_in.h"
+#include "mic_recorder.h"
 
 static const char *TAG = "s4_lvgl";
 
@@ -47,6 +50,29 @@ static void audio_selftest(void *arg)
     }
     ESP_LOGI(TAG, "[S5] 自检完成, 静音待命");
     bsp_audio_out_mute(true);
+    vTaskDelete(NULL);
+}
+#endif
+
+#ifdef CONFIG_S6_MIC_SELFTEST
+/* S6 自检: 静默基线 2s → 说话 2s (S6-A 验收) → [可选] 触摸录音机 (S6-C 验收). */
+static void mic_selftest(void *arg)
+{
+    vTaskDelay(pdMS_TO_TICKS(1500));        /* 让显示先稳 */
+    ESP_ERROR_CHECK(bsp_audio_in_init());
+
+    ESP_LOGI(TAG, "[S6-A] 静默基线 2s — 别说话");
+    ESP_ERROR_CHECK(bsp_audio_in_selftest(2000, NULL, NULL));
+
+    ESP_LOGI(TAG, "[S6-A] 对着麦克风说话 2s — RMS 应显著升高");
+    ESP_ERROR_CHECK(bsp_audio_in_selftest(2000, NULL, NULL));
+
+#ifdef CONFIG_S6_MIC_ECHO_TEST
+    ESP_LOGI(TAG, "[S6-C] 触摸录音机: 屏幕单击 = 录音 / 播放");
+    mic_recorder_start();
+#endif
+
+    ESP_LOGI(TAG, "[S6] 自检完成, 溢出累计 %lu 帧", (unsigned long)bsp_audio_in_overflows());
     vTaskDelete(NULL);
 }
 #endif
@@ -89,5 +115,9 @@ void app_main(void)
 
 #ifdef CONFIG_S5_AUDIO_SELFTEST
     xTaskCreatePinnedToCore(audio_selftest, "s5_test", 6144, NULL, 5, NULL, 0);
+#endif
+
+#ifdef CONFIG_S6_MIC_SELFTEST
+    xTaskCreatePinnedToCore(mic_selftest, "s6_test", 6144, NULL, 5, NULL, 0);
 #endif
 }
