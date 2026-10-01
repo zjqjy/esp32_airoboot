@@ -1,0 +1,6 @@
+## S4: LVGL 显示栈依赖
+## lvgl 用本地缓存可命中的 ~9.3.0; esp_lvgl_port 需从 registry 拉取 (idf>=5.2, lvgl>=8,<10)
+dependencies:
+  idf: ">=5.2"
+  lvgl/lvgl: "~9.3.0"
+  espressif/esp_lvgl_port: "^2.4"

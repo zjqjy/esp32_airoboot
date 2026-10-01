@@ -1,6 +1,8 @@
 # Name,   Type, SubType, Offset,  Size,     Flags
-# S3: 16MB flash 单 factory 布局 (决策 2026-09-14: 砍双 OTA, 5MB app + assets 存储区)
+# S4: LVGL 版素材改走 app 内 .rodata (flash 零拷贝直读, RGB565 帧数据 ~7MB)
+#      factory 扩到 9M 容纳; 原 10M FAT assets 区从未存过东西, 让出空间
+#      ⚠️ 分区表变了, 若启动异常先 idf.py erase-flash 再 flash
 nvs,      data, nvs,     0x9000,  0x6000,
 phy_init, data, phy,     0xf000,  0x1000,
-factory,  app,  factory, 0x10000, 5M,
-assets,   data, fat,     ,        10M,
+factory,  app,  factory, 0x10000, 9M,
+assets,   data, fat,     ,        6M,
