@@ -32,6 +32,9 @@ esp_err_t bsp_audio_in_start(void);
 /* 停流: disable I2S 时钟 → INMP441 进低功耗. 重新采集用 bsp_audio_in_start. */
 esp_err_t bsp_audio_in_stop(void);
 
+/* 当前是否在采集 (I2S 时钟运行中). */
+bool bsp_audio_in_running(void);
+
 /* 从环形缓冲取 n 帧单声道 int16 采样. 缓冲不够时等数据, 超时返回
  * ESP_ERR_TIMEOUT (已取到的前缀有效, 建议整块调用避免半读). */
 esp_err_t bsp_audio_in_read(int16_t *samples, size_t n, uint32_t timeout_ms);

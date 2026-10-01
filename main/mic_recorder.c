@@ -39,6 +39,11 @@ static volatile bool     s_cmd;         /* 触摸定时器 → worker 切换请�
 
 static int16_t *s_rec;                  /* PSRAM 录音缓冲 */
 
+/* 实时示波条: worker 每块(10ms)写入峰值幅度, UI 定时器读出画线 —— 待机即可视的拾音验证 */
+#define WAVE_N 120
+static volatile int16_t s_wave[WAVE_N];
+static volatile int s_wave_idx;
+
 /* ---------- worker: 音频状态机 ---------- */
 
 static void playback(size_t n)
@@ -46,7 +51,13 @@ static void playback(size_t n)
     if (n == 0) {
         return;
     }
-    ESP_LOGI(TAG, "回放 %lu ms", (unsigned long)((uint64_t)n * 1000 / MIC_SAMPLE_RATE));
+    int16_t pk = 0;
+    for (size_t i = 0; i < n; i++) {
+        int16_t a = (s_rec[i] >= 0) ? s_rec[i] : (int16_t)-s_rec[i];
+        if (a > pk) pk = a;
+    }
+    ESP_LOGI(TAG, "回放 %lu ms, 录制峰值 %d (峰值<500 基本等于没录到声音)",
+             (unsigned long)((uint64_t)n * 1000 / MIC_SAMPLE_RATE), pk);
     for (size_t i = 0; i < n; i++) {
         int32_t v = (int32_t)s_rec[i] * REC_GAIN;
         if (v > 32767) v = 32767;
@@ -69,6 +80,7 @@ static void rec_worker(void *arg)
 {
     int16_t chunk[REC_CHUNK];
     size_t n = 0;                       /* 本段已录帧数 */
+    int64_t next_rms_log = 0;
 
     while (1) {
         if (s_cmd) {
@@ -78,6 +90,7 @@ static void rec_worker(void *arg)
                 n = 0;
                 s_rec_ms = 0;
                 s_state = R_REC;
+                next_rms_log = 0;
                 ESP_LOGI(TAG, "开始录音");
             } else if (s_state == R_REC) {
                 bsp_audio_in_stop();    /* 半双工: 回放期间停麦 */
@@ -92,25 +105,44 @@ static void rec_worker(void *arg)
             /* R_PLAY 中忽略连点 */
         }
 
+        /* 待机常开拾音: 示波条待机也能看, 1.4mA 代价可忽略 (回放态除外, 半双工) */
+        if (s_state == R_IDLE && !bsp_audio_in_running()) {
+            bsp_audio_in_start();
+        }
+        if (!bsp_audio_in_running()) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+
+        if (bsp_audio_in_read(chunk, REC_CHUNK, 20) != ESP_OK) continue;
+
+        int16_t pk = 0;
+        int64_t sum2 = 0;
+        for (int i = 0; i < REC_CHUNK; i++) {
+            int16_t a = (chunk[i] >= 0) ? chunk[i] : (int16_t)-chunk[i];
+            if (a > pk) pk = a;
+            sum2 += (int64_t)chunk[i] * chunk[i];
+        }
+        s_wave[s_wave_idx] = pk;
+        s_wave_idx = (s_wave_idx + 1) % WAVE_N;
+        s_rms = (int32_t)sqrtf((float)sum2 / REC_CHUNK);
+
         if (s_state == R_REC) {
-            if (bsp_audio_in_read(chunk, REC_CHUNK, 20) == ESP_OK && n < REC_MAX_FRAMES) {
+            if (n < REC_MAX_FRAMES) {
                 memcpy(&s_rec[n], chunk, sizeof(chunk));
                 n += REC_CHUNK;
-                int64_t sum2 = 0;
-                for (int i = 0; i < REC_CHUNK; i++) {
-                    sum2 += (int64_t)chunk[i] * chunk[i];
-                }
-                s_rms = (int32_t)sqrtf((float)sum2 / REC_CHUNK);
                 s_rec_ms = (uint32_t)((uint64_t)n * 1000 / MIC_SAMPLE_RATE);
+                if (esp_timer_get_time() >= next_rms_log) {
+                    next_rms_log = esp_timer_get_time() + 250000;
+                    ESP_LOGI(TAG, "[rec] %lu ms RMS=%ld (说话应 > 1000, 底噪 ~400-800)",
+                             (unsigned long)s_rec_ms, (long)s_rms);
+                }
             }
             if (n >= REC_MAX_FRAMES) {
                 bsp_audio_in_stop();
                 s_state = R_READY;
-                s_rms = 0;
                 ESP_LOGI(TAG, "10s 上限, 单击播放");
             }
-        } else {
-            vTaskDelay(pdMS_TO_TICKS(20));
         }
     }
 }
@@ -137,6 +169,9 @@ static lv_obj_t *s_cat, *s_catbg, *s_tdot, *s_st, *s_tm;
 static const cat_anim_lvgl_t *s_cat_anim;
 static int s_fi;
 static int64_t s_frame_due;
+
+static lv_obj_t *s_wave_line;
+static lv_point_precise_t s_wave_pts[WAVE_N];
 
 static lv_color_t rgb565_to_lv(uint16_t v)
 {
@@ -204,6 +239,16 @@ static void ui_timer_cb(lv_timer_t *t)
                  (unsigned long)(s_rec_ms / 1000), (unsigned long)((s_rec_ms % 1000) / 100));
         lv_label_set_text(s_tm, buf);
     }
+
+    /* 实时示波条: 最近 1.2s 峰值包络, 说话即起伏 (待机可视的拾音验证) */
+    for (int i = 0; i < WAVE_N; i++) {
+        int idx = (s_wave_idx + i) % WAVE_N;        /* 旧 → 新 */
+        int amp = s_wave[idx];
+        if (amp > 8000) amp = 8000;
+        s_wave_pts[i].x = i * 220 / (WAVE_N - 1);
+        s_wave_pts[i].y = 18 - amp * 18 / 8000;     /* 静音贴底线, 越响越高 */
+    }
+    lv_obj_invalidate(s_wave_line);
 
     /* 猫帧推进 (按素材 GIF 时序) */
     if (s_cat_anim != NULL) {
@@ -277,10 +322,21 @@ void mic_recorder_start(void)
     lv_obj_remove_style_all(s_catbg);
     lv_obj_set_style_radius(s_catbg, 18, 0);
     lv_obj_set_style_bg_opa(s_catbg, LV_OPA_COVER, 0);
-    lv_obj_align(s_catbg, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_align(s_catbg, LV_ALIGN_CENTER, 0, -10);
     lv_obj_add_flag(s_catbg, LV_OBJ_FLAG_HIDDEN);
     s_cat = lv_image_create(scr);
-    lv_obj_align(s_cat, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_align(s_cat, LV_ALIGN_CENTER, 0, -10);
+
+    /* 实时示波条 (待机常开拾音, 说话即起伏) */
+    s_wave_line = lv_line_create(scr);
+    for (int i = 0; i < WAVE_N; i++) {
+        s_wave_pts[i].x = i * 220 / (WAVE_N - 1);
+        s_wave_pts[i].y = 18;
+    }
+    lv_line_set_points(s_wave_line, s_wave_pts, WAVE_N);
+    lv_obj_set_pos(s_wave_line, 10, 210);
+    lv_obj_set_style_line_color(s_wave_line, lv_color_hex(0x4FC3F7), 0);
+    lv_obj_set_style_line_width(s_wave_line, 2, 0);
 
     s_st = lv_label_create(scr);
     lv_label_set_text(s_st, "单击屏幕");

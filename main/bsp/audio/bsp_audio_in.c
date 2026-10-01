@@ -142,6 +142,11 @@ esp_err_t bsp_audio_in_stop(void)
     return ESP_OK;
 }
 
+bool bsp_audio_in_running(void)
+{
+    return s_enabled;
+}
+
 /* ---------- 初始化 ---------- */
 
 esp_err_t bsp_audio_in_init(void)
