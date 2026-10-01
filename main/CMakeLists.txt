@@ -14,5 +14,5 @@ idf_component_register(
     INCLUDE_DIRS "." "bsp" "bsp/lcd" "bsp/lcd_esp" "bsp/led" "bsp/audio" "cat"
     PRIV_REQUIRES esp_driver_rmt esp_driver_spi esp_driver_gpio esp_driver_i2c
                   esp_driver_i2s esp_timer heap esp_lcd lvgl__lvgl espressif__esp_lvgl_port
-                  fatfs wear_levelling esp_partition vfs
+                  fatfs wear_levelling esp_partition vfs mbedtls
 )

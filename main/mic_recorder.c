@@ -14,6 +14,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
+#include "mbedtls/base64.h"
 #include "lvgl.h"
 #include "esp_lvgl_port.h"
 #include "touch.h"
@@ -46,9 +47,38 @@ static volatile int s_wave_idx;
 
 /* ---------- worker: 音频状态机 ---------- */
 
-static void playback(size_t n)
+#if CONFIG_S6_MIC_SERIAL_DUMP
+/* 录音结束经串口导出 PCM: ===XZ_PCM 头 + base64 + 尾, PC 端 tools/serial_recorder.py 收流存 WAV */
+static void serial_dump_pcm(size_t frames)
 {
-    if (n == 0) {
+    size_t bytes = frames * sizeof(int16_t);
+    size_t b64_len = ((bytes + 2) / 3) * 4 + 4;
+    char *b64 = heap_caps_malloc(b64_len, MALLOC_CAP_SPIRAM);
+    if (b64 == NULL) {
+        ESP_LOGW(TAG, "dump 内存不足, 跳过导出");
+        return;
+    }
+    size_t olen = 0;
+    if (mbedtls_base64_encode((unsigned char *)b64, b64_len, &olen,
+                              (const unsigned char *)s_rec, bytes) != 0) {
+        heap_caps_free(b64);
+        return;
+    }
+    printf("\n===XZ_PCM v1 n=%u sr=16000 ch=1 bits=16===\n", (unsigned)frames);
+    for (size_t off = 0; off < olen; off += 4000) {
+        size_t take = (olen - off > 4000) ? 4000 : olen - off;
+        fwrite(b64 + off, 1, take, stdout);
+        printf("\n");
+    }
+    printf("===XZ_PCM_END===\n");
+    fflush(stdout);
+    heap_caps_free(b64);
+    ESP_LOGI(TAG, "已串口导出 %u 帧 PCM", (unsigned)frames);
+}
+#endif
+
+static void playback(size_t n)
+{    if (n == 0) {
         return;
     }
     int16_t pk = 0;
@@ -94,6 +124,9 @@ static void rec_worker(void *arg)
                 ESP_LOGI(TAG, "开始录音");
             } else if (s_state == R_REC) {
                 bsp_audio_in_stop();    /* 半双工: 回放期间停麦 */
+#if CONFIG_S6_MIC_SERIAL_DUMP
+                serial_dump_pcm(n);     /* 经串口导出给 PC (存 WAV / 语音识别) */
+#endif
                 s_state = R_PLAY;
                 playback(n);
                 s_state = R_IDLE;
@@ -141,6 +174,9 @@ static void rec_worker(void *arg)
             if (n >= REC_MAX_FRAMES) {
                 bsp_audio_in_stop();
                 s_state = R_READY;
+#if CONFIG_S6_MIC_SERIAL_DUMP
+                serial_dump_pcm(n);
+#endif
                 ESP_LOGI(TAG, "10s 上限, 单击播放");
             }
         }

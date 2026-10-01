@@ -34,4 +34,11 @@ config S6_MIC_ECHO_TEST
         并经 MAX98357 回放, 循环使用. 单段上限 10s (PSRAM), 回放软件增益 x8,
         播放期间停麦 (半双工) 防啸叫. 猫动画暂停被本界面接管; 重启退出.
 
+config S6_MIC_SERIAL_DUMP
+    bool "录音结束经串口导出 PCM (PC 存 WAV / 语音识别)"
+    default y
+    help
+        每次录音停止后, 经串口以 ===XZ_PCM 标记 + base64 导出 PCM.
+        PC 端运行 tools/serial_recorder.py 收流存 WAV, 加 --asr 可本地语音识别.
+
 endmenu
