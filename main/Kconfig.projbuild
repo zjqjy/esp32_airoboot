@@ -8,4 +8,11 @@ config S5_AUDIO_SELFTEST
         /assets/t1~t3.wav (S5-C/D 验收). 无 assets 分区时跳过 WAV 段.
         正式发布可关闭.
 
+config S5_AUDIO_60S_TEST
+    bool "自检追加 60s 连播耐久测试 (S5-B 验收)"
+    default n
+    help
+        在 440Hz 2s 之后连续播 60s 正弦, 验证事件驱动 + 环形缓冲
+        长时间运行无断流/无爆音 (S5-B 验收项). 默认关.
+
 endmenu

@@ -32,6 +32,11 @@ static void audio_selftest(void *arg)
     ESP_LOGI(TAG, "[S5-A] 440Hz 正弦 2s — 调音器对音准");
     ESP_ERROR_CHECK(bsp_audio_out_play_sine(2000));
 
+#ifdef CONFIG_S5_AUDIO_60S_TEST
+    ESP_LOGI(TAG, "[S5-B] 60s 连播耐久测试 — 听断流/爆音");
+    ESP_ERROR_CHECK(bsp_audio_out_play_sine(60000));
+#endif
+
     const char *lines[3] = { "/assets/t1.wav", "/assets/t2.wav", "/assets/t3.wav" };
     for (int i = 0; i < 3; i++) {
         ESP_LOGI(TAG, "[S5-C/D] 播 %s", lines[i]);
