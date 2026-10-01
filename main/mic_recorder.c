@@ -20,6 +20,7 @@
 #include "bsp/audio/bsp_audio_in.h"
 #include "bsp/audio/bsp_audio_out.h"
 #include "cat/cat_player_lvgl.h"
+#include "cat_lvgl_assets.h"
 #include "mic_recorder.h"
 
 static const char *TAG = "mic_rec";
@@ -122,7 +123,59 @@ static void rec_worker(void *arg)
 LV_FONT_DECLARE(rec_16);
 #define REC_FONT &rec_16
 
-static lv_obj_t *s_arc, *s_dot, *s_st, *s_tm;
+/* 状态 → 猫动画 (S3 哭泣猫素材零拷贝复用): 黑底猫融进纯黑屏, 白底猫配白卡当"拍立得"反差梗 */
+static const cat_anim_lvgl_t *const REC_CATS[] = {
+    &CAT_A04_PEACH_BOWL,     /* R_IDLE  淡定吃碗 */
+    &CAT_A03_PEACH_LOOK,     /* R_REC   停下抬头盯你 (在听) */
+    &CAT_A01_PEACHGOMA_CRY,  /* R_PLAY  听到自己录音吓哭 (白底拍立得) */
+    &CAT_A02_PEACH_FLOORCRY, /* R_READY 录满 10s 趴地崩溃 (白底拍立得) */
+};
+#define CAT_SCALE 154                  /* LVGL 256 = 1.0x → 220px 素材缩到 ~132px */
+
+static lv_obj_t *s_cat, *s_catbg, *s_tdot, *s_st, *s_tm;
+static const cat_anim_lvgl_t *s_cat_anim;
+static int s_fi;
+static int64_t s_frame_due;
+
+static lv_color_t rgb565_to_lv(uint16_t v)
+{
+    return lv_color_make(((v >> 11) & 0x1F) << 3, ((v >> 5) & 0x3F) << 2, (v & 0x1F) << 3);
+}
+
+/* 状态切换 → 换猫 + 文案; 录音态每 tick 刷新计时 */
+static void apply_state_ui(rec_state_t st)
+{
+    static const struct { const char *st_text, *tm_text; uint32_t dot; } MAP[] = {
+        [R_IDLE]  = { "单击屏幕", "开始录音", 0x3A3A3A },
+        [R_REC]   = { "录音中",   "",         0x00FF00 },
+        [R_PLAY]  = { "回放中",   "",         0x3A3A3A },
+        [R_READY] = { "已录 10 s", "单击播放", 0xFFD60A },
+    };
+    const cat_anim_lvgl_t *a = REC_CATS[st];
+
+    s_cat_anim = a;
+    s_fi = 0;
+    s_frame_due = 0;
+    lv_image_set_scale(s_cat, CAT_SCALE);
+    lv_image_set_src(s_cat, a->frames[0]);
+    if (a->bg_color != 0x0000) {                 /* 白底猫 → 拍立得白卡 */
+        lv_obj_set_size(s_catbg, a->w * CAT_SCALE / 256 + 16,
+                        a->h * CAT_SCALE / 256 + 16);
+        lv_obj_set_style_bg_color(s_catbg, rgb565_to_lv(a->bg_color), 0);
+        lv_obj_align(s_catbg, LV_ALIGN_CENTER, 0, 10);
+        lv_obj_remove_flag(s_catbg, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_catbg, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_label_set_text(s_st, MAP[st].st_text);
+    lv_label_set_text(s_tm, MAP[st].tm_text);
+    lv_obj_set_style_bg_color(s_tdot, lv_color_hex(MAP[st].dot), 0);
+    if (st == R_REC || st == R_READY) {
+        lv_obj_remove_flag(s_tdot, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_tdot, LV_OBJ_FLAG_HIDDEN);
+    }
+}
 
 static void ui_timer_cb(lv_timer_t *t)
 {
@@ -138,52 +191,27 @@ static void ui_timer_cb(lv_timer_t *t)
     }
     was_down = down;
 
-    /* 状态 → 圆环颜色 / 中心文字 / 红点 / 电平 */
-    static char buf[32];
-    uint32_t ring, tcol;
-    int val, dot_on;
-    const char *st, *tm = "";
-    switch (s_state) {
-    case R_REC:
-        ring = 0xFF5A5A; tcol = 0xE8EAED;
+    /* 状态切换 (首 tick 必然触发: 初值取不属于任何状态的哨兵) */
+    static rec_state_t last_state = (rec_state_t)-1;
+    if (s_state != last_state) {
+        last_state = s_state;
+        apply_state_ui(last_state);
+    }
+    if (s_state == R_REC) {                      /* 录音计时每 tick 刷新 */
+        static char buf[16];
         snprintf(buf, sizeof(buf), "%lu.%lu s",
                  (unsigned long)(s_rec_ms / 1000), (unsigned long)((s_rec_ms % 1000) / 100));
-        tm = buf;
-        st = "录音中";
-        val = (s_rms > 1000) ? 100 : s_rms / 10;
-        dot_on = 1;
-        break;
-    case R_READY:
-        ring = 0xFFC94D; tcol = 0xFFC94D;
-        st = "已录 10 s";
-        tm = "单击播放";
-        val = 100;
-        dot_on = 0;
-        break;
-    case R_PLAY:
-        ring = 0x53D18A; tcol = 0x53D18A;
-        st = "回放中";
-        val = 0;
-        dot_on = 0;
-        break;
-    default:
-        ring = 0x222A34; tcol = 0xE8EAED;
-        st = "单击屏幕";
-        tm = "开始录音";
-        val = 0;
-        dot_on = 0;
-        break;
+        lv_label_set_text(s_tm, buf);
     }
-    lv_arc_set_value(s_arc, val);
-    lv_obj_set_style_arc_color(s_arc, lv_color_hex(ring), LV_PART_INDICATOR);
-    lv_obj_set_style_text_color(s_st, lv_color_hex(tcol), 0);
-    lv_label_set_text(s_st, st);
-    lv_label_set_text(s_tm, tm);
-    lv_obj_set_style_bg_color(s_dot, lv_color_hex(ring), 0);
-    if (dot_on) {
-        lv_obj_remove_flag(s_dot, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(s_dot, LV_OBJ_FLAG_HIDDEN);
+
+    /* 猫帧推进 (按素材 GIF 时序) */
+    if (s_cat_anim != NULL) {
+        int64_t now = esp_timer_get_time();
+        if (now >= s_frame_due) {
+            s_fi = (s_fi + 1) % s_cat_anim->n_frames;
+            lv_image_set_src(s_cat, s_cat_anim->frames[s_fi]);
+            s_frame_due = now + (int64_t)s_cat_anim->delay_ms[s_fi] * 1000;
+        }
     }
 }
 
@@ -210,54 +238,58 @@ void mic_recorder_start(void)
     cat_player_lvgl_pause();            /* 停猫动画与触摸定时器, 触摸由录音机独占 */
 
     lv_obj_t *scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0x0E1116), 0);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), 0);   /* xiaozhi dark: 纯黑 */
     lv_obj_set_style_text_font(scr, REC_FONT, 0);
 
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, "录 音 机");
-    lv_obj_set_style_text_color(title, lv_color_hex(0x8A93A0), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 16);
+    /* 顶部状态栏 (xiaozhi 式: 左标题 + 右指示点) */
+    lv_obj_t *bar = lv_obj_create(scr);
+    lv_obj_remove_style_all(bar);
+    lv_obj_set_size(bar, 240, 34);
+    lv_obj_align(bar, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_t *title = lv_label_create(bar);
+    lv_label_set_text(title, "录音机");
+    lv_obj_set_style_text_color(title, lv_color_hex(0x9A9A9A), 0);
+    lv_obj_align(title, LV_ALIGN_LEFT_MID, 8, 0);
+    s_tdot = lv_obj_create(bar);
+    lv_obj_remove_style_all(s_tdot);
+    lv_obj_set_size(s_tdot, 8, 8);
+    lv_obj_set_style_radius(s_tdot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(s_tdot, LV_OPA_COVER, 0);
+    lv_obj_align(s_tdot, LV_ALIGN_RIGHT_MID, -8, 0);
+    lv_obj_add_flag(s_tdot, LV_OBJ_FLAG_HIDDEN);
 
-    /* 中央圆环: 背圈=轨道, 指示弧=实时电平, 内嵌状态+计时 */
-    s_arc = lv_arc_create(scr);
-    lv_obj_set_size(s_arc, 156, 156);
-    lv_obj_align(s_arc, LV_ALIGN_CENTER, 0, -16);
-    lv_arc_set_rotation(s_arc, 135);
-    lv_arc_set_bg_angles(s_arc, 0, 270);
-    lv_arc_set_range(s_arc, 0, 100);
-    lv_arc_set_value(s_arc, 0);
-    lv_obj_remove_style(s_arc, NULL, LV_PART_KNOB);
-    lv_obj_clear_flag(s_arc, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_style_arc_color(s_arc, lv_color_hex(0x222A34), LV_PART_MAIN);
-    lv_obj_set_style_arc_width(s_arc, 12, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(s_arc, lv_color_hex(0x222A34), LV_PART_INDICATOR);
-    lv_obj_set_style_arc_width(s_arc, 12, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(s_arc, lv_color_hex(0x161B22), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(s_arc, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(s_arc, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-
-    s_dot = lv_obj_create(scr);         /* 录音红点 (几何绘制, 不依赖字形) */
-    lv_obj_remove_style_all(s_dot);
-    lv_obj_set_size(s_dot, 10, 10);
-    lv_obj_set_style_radius(s_dot, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_opa(s_dot, LV_OPA_COVER, 0);
-    lv_obj_align(s_dot, LV_ALIGN_CENTER, 0, -38);
-    lv_obj_add_flag(s_dot, LV_OBJ_FLAG_HIDDEN);
+    /* 猫舞台: 白底猫垫"拍立得"白卡, 黑底猫直接融进黑屏 */
+    s_catbg = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_catbg);
+    lv_obj_set_style_radius(s_catbg, 18, 0);
+    lv_obj_set_style_bg_opa(s_catbg, LV_OPA_COVER, 0);
+    lv_obj_align(s_catbg, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_add_flag(s_catbg, LV_OBJ_FLAG_HIDDEN);
+    s_cat = lv_image_create(scr);
+    lv_obj_align(s_cat, LV_ALIGN_CENTER, 0, 10);
 
     s_st = lv_label_create(scr);
     lv_label_set_text(s_st, "单击屏幕");
-    lv_obj_set_style_text_color(s_st, lv_color_hex(0xE8EAED), 0);
-    lv_obj_align(s_st, LV_ALIGN_CENTER, 0, -12);
+    lv_obj_set_style_text_color(s_st, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_align(s_st, LV_ALIGN_TOP_MID, 0, 40);
 
     s_tm = lv_label_create(scr);
     lv_label_set_text(s_tm, "开始录音");
-    lv_obj_set_style_text_color(s_tm, lv_color_hex(0x8A93A0), 0);
-    lv_obj_align(s_tm, LV_ALIGN_CENTER, 0, 12);
+    lv_obj_set_style_text_color(s_tm, lv_color_hex(0x8A8A8A), 0);
+    lv_obj_align(s_tm, LV_ALIGN_TOP_MID, 0, 62);
 
-    lv_obj_t *hint = lv_label_create(scr);
-    lv_label_set_text(hint, "单击=录音/播放  重启退出");
-    lv_obj_set_style_text_color(hint, lv_color_hex(0x566070), 0);
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -18);
+    /* 底部 assistant 气泡 (xiaozhi: bubble #222222) */
+    lv_obj_t *bub = lv_obj_create(scr);
+    lv_obj_remove_style_all(bub);
+    lv_obj_set_size(bub, 148, 34);
+    lv_obj_align(bub, LV_ALIGN_BOTTOM_MID, 0, -16);
+    lv_obj_set_style_bg_color(bub, lv_color_hex(0x222222), 0);
+    lv_obj_set_style_bg_opa(bub, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(bub, 17, 0);
+    lv_obj_t *bt = lv_label_create(bub);
+    lv_label_set_text(bt, "单击=录音/播放");
+    lv_obj_set_style_text_color(bt, lv_color_hex(0xDDDDDD), 0);
+    lv_obj_center(bt);
 
     lv_screen_load_anim(scr, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, false);
     lv_timer_create(ui_timer_cb, 50, NULL);
