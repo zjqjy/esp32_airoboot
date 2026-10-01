@@ -220,22 +220,27 @@ static void ui_timer_cb(lv_timer_t *t)
 
 void mic_recorder_start(void)
 {
+    ESP_LOGI(TAG, "[boot] mic_recorder_start 进入");
     ESP_ERROR_CHECK(bsp_audio_in_init());       /* 幂等 */
     ESP_ERROR_CHECK(bsp_audio_out_init());      /* 幂等 (S5 自检可能已装) */
+    ESP_LOGI(TAG, "[boot] 音频驱动就绪");
 
     s_rec = heap_caps_malloc(REC_MAX_FRAMES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
     if (s_rec == NULL) {
         ESP_LOGE(TAG, "PSRAM 不足, 录音机不可用");
         return;
     }
+    ESP_LOGI(TAG, "[boot] 录音缓冲分配 OK");
 
     BaseType_t ok = xTaskCreatePinnedToCore(rec_worker, "mic_rec", 4096, NULL, 5, NULL, 0);
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "worker 创建失败");
         return;
     }
+    ESP_LOGI(TAG, "[boot] worker 已创建");
 
     lvgl_port_lock(0);
+    ESP_LOGI(TAG, "[boot] lvgl lock 拿到, 暂停猫定时器");
     cat_player_lvgl_pause();            /* 停猫动画与触摸定时器, 触摸由录音机独占 */
 
     lv_obj_t *scr = lv_obj_create(NULL);
@@ -301,8 +306,10 @@ void mic_recorder_start(void)
     lv_obj_center(bt);
 
     lv_screen_load_anim(scr, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, false);
+    ESP_LOGI(TAG, "[boot] 界面控件创建完成, 加载动画启动");
     lv_timer_create(ui_timer_cb, 50, NULL);
     lvgl_port_unlock();
+    ESP_LOGI(TAG, "[boot] 录音机界面创建完成");
 
     ESP_LOGI(TAG, "录音机界面就绪: 单击=录音/播放 (回放增益 x%d, 单段上限 10s)", REC_GAIN);
 }

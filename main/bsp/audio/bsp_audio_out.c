@@ -276,6 +276,8 @@ esp_err_t bsp_audio_out_init(void)
                                             NULL, 20, &s_task, 1);
     ESP_RETURN_ON_FALSE(ok == pdPASS, ESP_ERR_NO_MEM, TAG, "task");
 
+    s_out_ready = true;                     /* 全部初始化成功后置位 (漏置会导致重复申请 I2S1) */
+
     ESP_LOGI(TAG, "MAX98357 ready (I2S1 %dk/16bit/mono, BCLK=%d LRCK=%d DIN=%d SD=%d)",
              AUDIO_SAMPLE_RATE / 1000, AUDIO_BCLK_PIN, AUDIO_LRCK_PIN,
              AUDIO_DIN_PIN, AUDIO_SD_PIN);

@@ -118,6 +118,6 @@ void app_main(void)
 #endif
 
 #ifdef CONFIG_S6_MIC_SELFTEST
-    xTaskCreatePinnedToCore(mic_selftest, "s6_test", 6144, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(mic_selftest, "s6_test", 12288, NULL, 5, NULL, 0);
 #endif
 }
