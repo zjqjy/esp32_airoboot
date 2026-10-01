@@ -22,6 +22,7 @@
 #include "bsp/audio/bsp_audio_out.h"
 #include "cat/cat_player_lvgl.h"
 #include "cat_lvgl_assets.h"
+#include "wifi_link.h"
 #include "mic_recorder.h"
 
 static const char *TAG = "mic_rec";
@@ -106,6 +107,46 @@ static void playback(size_t n)
     bsp_audio_out_stop();
 }
 
+#if CONFIG_S6_WIFI_ASR
+/* 录音 PCM 发 PC 识别 (tools/asr_server.py), 文字回填气泡 */
+static char s_asr_text[48];
+static volatile bool s_asr_new;
+
+static void do_asr_post(size_t frames)
+{
+    if (!wifi_link_got_ip()) {
+        ESP_LOGW(TAG, "WiFi 未就绪, 跳过识别");
+        return;
+    }
+    snprintf(s_asr_text, sizeof(s_asr_text), "识别中");
+    s_asr_new = true;
+    char resp[160] = { 0 };
+    esp_err_t err = wifi_link_post(CONFIG_S6_ASR_URL, (const char *)s_rec,
+                                   frames * sizeof(int16_t), resp, sizeof(resp), 15000);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "识别请求失败: %s", esp_err_to_name(err));
+        snprintf(s_asr_text, sizeof(s_asr_text), "识别失败");
+        s_asr_new = true;
+        return;
+    }
+    const char *p = strstr(resp, "\"text\":\"");
+    if (p == NULL) {
+        ESP_LOGW(TAG, "响应异常: %s", resp);
+        snprintf(s_asr_text, sizeof(s_asr_text), "识别失败");
+        s_asr_new = true;
+        return;
+    }
+    p += 8;
+    const char *e = strchr(p, '"');
+    size_t len = e ? (size_t)(e - p) : strlen(p);
+    if (len > sizeof(s_asr_text) - 1) len = sizeof(s_asr_text) - 1;
+    memcpy(s_asr_text, p, len);
+    s_asr_text[len] = 0;
+    s_asr_new = true;
+    ESP_LOGI(TAG, "识别: %s", s_asr_text);
+}
+#endif
+
 static void rec_worker(void *arg)
 {
     int16_t chunk[REC_CHUNK];
@@ -129,10 +170,16 @@ static void rec_worker(void *arg)
 #endif
                 s_state = R_PLAY;
                 playback(n);
+#if CONFIG_S6_WIFI_ASR
+                do_asr_post(n);         /* WiFi 发 PC 识别, 文字回气泡 */
+#endif
                 s_state = R_IDLE;
             } else if (s_state == R_READY) {
                 s_state = R_PLAY;
                 playback(n);
+#if CONFIG_S6_WIFI_ASR
+                do_asr_post(n);
+#endif
                 s_state = R_IDLE;
             }
             /* R_PLAY 中忽略连点 */
@@ -208,6 +255,7 @@ static int64_t s_frame_due;
 
 static lv_obj_t *s_wave_line;
 static lv_point_precise_t s_wave_pts[WAVE_N];
+static lv_obj_t *s_bub_text;
 
 static lv_color_t rgb565_to_lv(uint16_t v)
 {
@@ -285,6 +333,15 @@ static void ui_timer_cb(lv_timer_t *t)
         s_wave_pts[i].y = 18 - amp * 18 / 8000;     /* 静音贴底线, 越响越高 */
     }
     lv_obj_invalidate(s_wave_line);
+
+    /* PC 识别结果 → 气泡显示 (识别文字可能含生僻字, 换内置思源黑体) */
+    if (s_asr_new) {
+        s_asr_new = false;
+#if CONFIG_S6_WIFI_ASR && CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_16_CJK
+        lv_obj_set_style_text_font(s_bub_text, &lv_font_source_han_sans_sc_16_cjk, 0);
+#endif
+        lv_label_set_text(s_bub_text, s_asr_text);
+    }
 
     /* 猫帧推进 (按素材 GIF 时序) */
     if (s_cat_anim != NULL) {
@@ -393,6 +450,7 @@ void mic_recorder_start(void)
     lv_obj_set_style_bg_opa(bub, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(bub, 17, 0);
     lv_obj_t *bt = lv_label_create(bub);
+    s_bub_text = bt;
     lv_label_set_text(bt, "单击=录音/播放");
     lv_obj_set_style_text_color(bt, lv_color_hex(0xC8CAD0), 0);
     lv_obj_center(bt);

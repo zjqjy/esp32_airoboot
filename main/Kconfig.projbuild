@@ -41,4 +41,29 @@ config S6_MIC_SERIAL_DUMP
         每次录音停止后, 经串口以 ===XZ_PCM 标记 + base64 导出 PCM.
         PC 端运行 tools/serial_recorder.py 收流存 WAV, 加 --asr 可本地语音识别.
 
+config S6_WIFI_ASR
+    bool "录音后经 WiFi 发 PC 识别, 文字显示在气泡"
+    default y
+    help
+        录音停止后把 PCM 以 HTTP POST 发到识别服务, 返回的文字显示在
+        屏幕气泡. 需电脑运行 tools/asr_server.py 且与板子同一 WiFi.
+
+config S6_WIFI_SSID
+    string "WiFi SSID"
+    default ""
+    help
+        板子连接的 WiFi 名称. 实际值写在 sdkconfig (不入库).
+
+config S6_WIFI_PASS
+    string "WiFi 密码"
+    default ""
+    help
+        WiFi 密码, 写在 sdkconfig (不入库).
+
+config S6_ASR_URL
+    string "识别服务地址"
+    default "http://192.168.10.40:8765/asr"
+    help
+        PC 运行 asr_server.py 后提示的地址.
+
 endmenu

@@ -19,6 +19,7 @@
 #include "cat_player_lvgl.h"
 #include "bsp/audio/bsp_audio_out.h"
 #include "bsp/audio/bsp_audio_in.h"
+#include "wifi_link.h"
 #include "mic_recorder.h"
 
 static const char *TAG = "s4_lvgl";
@@ -111,6 +112,7 @@ void app_main(void)
     }
 
     cat_player_lvgl_start();                    /* 注册控件与定时器后返回 */
+    wifi_link_start();                          /* WiFi 连接异步进行 (S6 语音识别用) */
     /* 此后 LVGL 任务接管渲染, app_main 返回无害 */
 
 #ifdef CONFIG_S5_AUDIO_SELFTEST

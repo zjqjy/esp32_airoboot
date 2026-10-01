@@ -4,6 +4,7 @@
 idf_component_register(
     SRCS "main.c" "led_strip_encoder.c"
          "mic_recorder.c"
+         "wifi_link.c"
          "fonts/lv_font_rec_16.c"
          "bsp/lcd_esp/lcd_esp.c"
          "bsp/lcd/touch.c"
@@ -15,4 +16,5 @@ idf_component_register(
     PRIV_REQUIRES esp_driver_rmt esp_driver_spi esp_driver_gpio esp_driver_i2c
                   esp_driver_i2s esp_timer heap esp_lcd lvgl__lvgl espressif__esp_lvgl_port
                   fatfs wear_levelling esp_partition vfs mbedtls
+                  esp_wifi nvs_flash esp_netif esp_http_client lwip
 )
