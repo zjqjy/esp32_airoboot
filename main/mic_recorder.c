@@ -121,6 +121,7 @@ static void rec_worker(void *arg)
  * 内置 source_han 只收常用 1000 字, 缺 麦/录/风/单/击/播/回 —— 模拟器渲染抓到后换的自定义字库.
  * 改界面文案后需重新生成: tools 见 .em/discussion/20261001-mic-in/ 试用记录. */
 LV_FONT_DECLARE(rec_16);
+LV_FONT_DECLARE(lv_font_montserrat_14);   /* 顶栏音符图标 (FontAwesome 子集) */
 #define REC_FONT &rec_16
 
 /* 状态 → 猫动画 (S3 哭泣猫素材零拷贝复用): 黑底猫融进纯黑屏, 白底猫配白卡当"拍立得"反差梗 */
@@ -147,9 +148,9 @@ static void apply_state_ui(rec_state_t st)
 {
     static const struct { const char *st_text, *tm_text; uint32_t dot; } MAP[] = {
         [R_IDLE]  = { "单击屏幕", "开始录音", 0x3A3A3A },
-        [R_REC]   = { "录音中",   "",         0x00FF00 },
-        [R_PLAY]  = { "回放中",   "",         0x3A3A3A },
-        [R_READY] = { "已录 10 s", "单击播放", 0xFFD60A },
+        [R_REC]   = { "录音中",   "",         0x3DDC84 },
+        [R_PLAY]  = { "回放中",   "",         0x8B93FF },
+        [R_READY] = { "已录 10 s", "",        0xFFD60A },
     };
     const cat_anim_lvgl_t *a = REC_CATS[st];
 
@@ -170,7 +171,7 @@ static void apply_state_ui(rec_state_t st)
     lv_label_set_text(s_st, MAP[st].st_text);
     lv_label_set_text(s_tm, MAP[st].tm_text);
     lv_obj_set_style_bg_color(s_tdot, lv_color_hex(MAP[st].dot), 0);
-    if (st == R_REC || st == R_READY) {
+    if (st != R_IDLE) {
         lv_obj_remove_flag(s_tdot, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(s_tdot, LV_OBJ_FLAG_HIDDEN);
@@ -241,15 +242,23 @@ void mic_recorder_start(void)
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), 0);   /* xiaozhi dark: 纯黑 */
     lv_obj_set_style_text_font(scr, REC_FONT, 0);
 
-    /* 顶部状态栏 (xiaozhi 式: 左标题 + 右指示点) */
+    /* 顶部状态栏 chip (v5 精修: 内嵌面板 + 音符图标, 参照 music demo/c3-mini) */
     lv_obj_t *bar = lv_obj_create(scr);
     lv_obj_remove_style_all(bar);
-    lv_obj_set_size(bar, 240, 34);
-    lv_obj_align(bar, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_size(bar, 224, 30);
+    lv_obj_align(bar, LV_ALIGN_TOP_MID, 0, 6);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(0x17161C), 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(bar, 12, 0);
+    lv_obj_t *ic = lv_label_create(bar);
+    lv_label_set_text(ic, LV_SYMBOL_AUDIO);
+    lv_obj_set_style_text_font(ic, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(ic, lv_color_hex(0x6F8AF6), 0);
+    lv_obj_align(ic, LV_ALIGN_LEFT_MID, 10, 0);
     lv_obj_t *title = lv_label_create(bar);
     lv_label_set_text(title, "录音机");
-    lv_obj_set_style_text_color(title, lv_color_hex(0x9A9A9A), 0);
-    lv_obj_align(title, LV_ALIGN_LEFT_MID, 8, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xC8CAD0), 0);
+    lv_obj_align(title, LV_ALIGN_LEFT_MID, 30, 0);
     s_tdot = lv_obj_create(bar);
     lv_obj_remove_style_all(s_tdot);
     lv_obj_set_size(s_tdot, 8, 8);
@@ -275,7 +284,7 @@ void mic_recorder_start(void)
 
     s_tm = lv_label_create(scr);
     lv_label_set_text(s_tm, "开始录音");
-    lv_obj_set_style_text_color(s_tm, lv_color_hex(0x8A8A8A), 0);
+    lv_obj_set_style_text_color(s_tm, lv_color_hex(0x9AA0A6), 0);
     lv_obj_align(s_tm, LV_ALIGN_TOP_MID, 0, 62);
 
     /* 底部 assistant 气泡 (xiaozhi: bubble #222222) */
@@ -283,12 +292,12 @@ void mic_recorder_start(void)
     lv_obj_remove_style_all(bub);
     lv_obj_set_size(bub, 148, 34);
     lv_obj_align(bub, LV_ALIGN_BOTTOM_MID, 0, -16);
-    lv_obj_set_style_bg_color(bub, lv_color_hex(0x222222), 0);
+    lv_obj_set_style_bg_color(bub, lv_color_hex(0x201F26), 0);
     lv_obj_set_style_bg_opa(bub, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(bub, 17, 0);
     lv_obj_t *bt = lv_label_create(bub);
     lv_label_set_text(bt, "单击=录音/播放");
-    lv_obj_set_style_text_color(bt, lv_color_hex(0xDDDDDD), 0);
+    lv_obj_set_style_text_color(bt, lv_color_hex(0xC8CAD0), 0);
     lv_obj_center(bt);
 
     lv_screen_load_anim(scr, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, false);
