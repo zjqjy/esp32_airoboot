@@ -74,6 +74,7 @@ bool wifi_link_got_ip(void)
 }
 
 esp_err_t wifi_link_post(const char *url, const char *body, size_t len,
+                         const char *hdr_name, const char *hdr_val,
                          char *resp, size_t resp_sz, int timeout_ms)
 {
     if (!wifi_link_got_ip()) {
@@ -89,6 +90,9 @@ esp_err_t wifi_link_post(const char *url, const char *body, size_t len,
         return ESP_FAIL;
     }
     esp_http_client_set_header(client, "Content-Type", "application/octet-stream");
+    if (hdr_name && hdr_val) {
+        esp_http_client_set_header(client, hdr_name, hdr_val);
+    }
     esp_err_t err = esp_http_client_open(client, (int)len);
     if (err != ESP_OK) {
         esp_http_client_cleanup(client);

@@ -36,8 +36,9 @@ static volatile bool     s_cmd;         /* 触摸定时器 → worker 切换请�
 
 /* ---- 录音参数 ---- */
 #define REC_CHUNK      160              /* 10ms @16kHz */
-#define REC_MAX_FRAMES (MIC_SAMPLE_RATE * 10)   /* 单段上限 10s */
+#define REC_MAX_FRAMES (MIC_SAMPLE_RATE * 60)   /* 单段上限 60s (PSRAM 1.92MB) */
 #define REC_GAIN       8                /* 回放软件增益 (叠加 GAIN=12dB 硬件增益) */
+#define STREAM_CHUNK   8000             /* 流式块 250ms, POST 耗时 << 环形缓冲 512ms */
 
 static int16_t *s_rec;                  /* PSRAM 录音缓冲 */
 
@@ -78,6 +79,51 @@ static void serial_dump_pcm(size_t frames)
 }
 #endif
 
+#if CONFIG_S6_WIFI_ASR
+/* 流式: 录音中每 250ms 把新片段 POST 给 PC (X-Chunk), 终止时 X-Final 触发识别 */
+static char s_asr_text[48];
+static volatile bool s_asr_new;
+static size_t s_sent;                   /* 已流式发出的帧数 */
+static bool s_final_done;               /* 60s 自动收尾后, 再单击不重复识别 */
+
+static bool asr_send_chunk(const int16_t *frames, size_t n)
+{
+    return wifi_link_post(CONFIG_S6_ASR_URL, (const char *)frames,
+                          n * sizeof(int16_t), "X-Chunk", "1",
+                          NULL, 0, 500) == ESP_OK;
+}
+
+static void finalize_asr(void)
+{
+    snprintf(s_asr_text, sizeof(s_asr_text), "识别中");
+    s_asr_new = true;
+    char resp[192] = { 0 };
+    esp_err_t err = wifi_link_post(CONFIG_S6_ASR_URL, "", 0,
+                                   "X-Final", "1", resp, sizeof(resp), 30000);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "识别请求失败: %s", esp_err_to_name(err));
+        snprintf(s_asr_text, sizeof(s_asr_text), "识别失败");
+        s_asr_new = true;
+        return;
+    }
+    const char *p = strstr(resp, "\"text\":\"");
+    if (p == NULL) {
+        ESP_LOGW(TAG, "响应异常: %s", resp);
+        snprintf(s_asr_text, sizeof(s_asr_text), "识别失败");
+        s_asr_new = true;
+        return;
+    }
+    p += 8;
+    const char *e = strchr(p, '"');
+    size_t len = e ? (size_t)(e - p) : strlen(p);
+    if (len > sizeof(s_asr_text) - 1) len = sizeof(s_asr_text) - 1;
+    memcpy(s_asr_text, p, len);
+    s_asr_text[len] = 0;
+    s_asr_new = true;
+    ESP_LOGI(TAG, "识别: %s", s_asr_text);
+}
+#endif
+
 static void playback(size_t n)
 {    if (n == 0) {
         return;
@@ -107,46 +153,6 @@ static void playback(size_t n)
     bsp_audio_out_stop();
 }
 
-#if CONFIG_S6_WIFI_ASR
-/* 录音 PCM 发 PC 识别 (tools/asr_server.py), 文字回填气泡 */
-static char s_asr_text[48];
-static volatile bool s_asr_new;
-
-static void do_asr_post(size_t frames)
-{
-    if (!wifi_link_got_ip()) {
-        ESP_LOGW(TAG, "WiFi 未就绪, 跳过识别");
-        return;
-    }
-    snprintf(s_asr_text, sizeof(s_asr_text), "识别中");
-    s_asr_new = true;
-    char resp[160] = { 0 };
-    esp_err_t err = wifi_link_post(CONFIG_S6_ASR_URL, (const char *)s_rec,
-                                   frames * sizeof(int16_t), resp, sizeof(resp), 15000);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "识别请求失败: %s", esp_err_to_name(err));
-        snprintf(s_asr_text, sizeof(s_asr_text), "识别失败");
-        s_asr_new = true;
-        return;
-    }
-    const char *p = strstr(resp, "\"text\":\"");
-    if (p == NULL) {
-        ESP_LOGW(TAG, "响应异常: %s", resp);
-        snprintf(s_asr_text, sizeof(s_asr_text), "识别失败");
-        s_asr_new = true;
-        return;
-    }
-    p += 8;
-    const char *e = strchr(p, '"');
-    size_t len = e ? (size_t)(e - p) : strlen(p);
-    if (len > sizeof(s_asr_text) - 1) len = sizeof(s_asr_text) - 1;
-    memcpy(s_asr_text, p, len);
-    s_asr_text[len] = 0;
-    s_asr_new = true;
-    ESP_LOGI(TAG, "识别: %s", s_asr_text);
-}
-#endif
-
 static void rec_worker(void *arg)
 {
     int16_t chunk[REC_CHUNK];
@@ -159,26 +165,44 @@ static void rec_worker(void *arg)
             if (s_state == R_IDLE) {
                 bsp_audio_in_start();   /* 重开麦并清旧缓冲 */
                 n = 0;
+                s_sent = 0;
+                s_final_done = false;
                 s_rec_ms = 0;
                 s_state = R_REC;
                 next_rms_log = 0;
-                ESP_LOGI(TAG, "开始录音");
+                ESP_LOGI(TAG, "开始录音 (实时传输)");
             } else if (s_state == R_REC) {
-                bsp_audio_in_stop();    /* 半双工: 回放期间停麦 */
+                bsp_audio_in_stop();    /* 半双工: 停麦 */
 #if CONFIG_S6_MIC_SERIAL_DUMP
-                serial_dump_pcm(n);     /* 经串口导出给 PC (存 WAV / 语音识别) */
+                if (!wifi_link_got_ip()) {
+                    serial_dump_pcm(n); /* 离线兜底: 串口导出 */
+                }
 #endif
+#if CONFIG_S6_WIFI_ASR
+                if (wifi_link_got_ip()) {
+                    if (n > s_sent) {
+                        asr_send_chunk(&s_rec[s_sent], n - s_sent);  /* 收尾片段 */
+                    }
+                    if (!s_final_done) {
+                        finalize_asr();     /* 触发识别 → 文字回气泡 */
+                        s_final_done = true;
+                    }
+                }
+#else
                 s_state = R_PLAY;
                 playback(n);
-#if CONFIG_S6_WIFI_ASR
-                do_asr_post(n);         /* WiFi 发 PC 识别, 文字回气泡 */
 #endif
                 s_state = R_IDLE;
             } else if (s_state == R_READY) {
+#if CONFIG_S6_WIFI_ASR
+                if (!s_final_done && wifi_link_got_ip()) {
+                    if (n > s_sent) asr_send_chunk(&s_rec[s_sent], n - s_sent);
+                    finalize_asr();
+                    s_final_done = true;
+                }
+#else
                 s_state = R_PLAY;
                 playback(n);
-#if CONFIG_S6_WIFI_ASR
-                do_asr_post(n);
 #endif
                 s_state = R_IDLE;
             }
@@ -214,17 +238,33 @@ static void rec_worker(void *arg)
                 s_rec_ms = (uint32_t)((uint64_t)n * 1000 / MIC_SAMPLE_RATE);
                 if (esp_timer_get_time() >= next_rms_log) {
                     next_rms_log = esp_timer_get_time() + 250000;
-                    ESP_LOGI(TAG, "[rec] %lu ms RMS=%ld (说话应 > 1000, 底噪 ~400-800)",
-                             (unsigned long)s_rec_ms, (long)s_rms);
+                    ESP_LOGI(TAG, "[rec] %lu ms RMS=%ld 已传 %lu KB",
+                             (unsigned long)s_rec_ms, (long)s_rms,
+                             (unsigned long)(s_sent * 2 / 1024));
                 }
             }
+#if CONFIG_S6_WIFI_ASR
+            /* 实时流式: 攒满 250ms 就发, POST 耗时 << 环形缓冲, 不丢采样 */
+            if (n - s_sent >= STREAM_CHUNK / (int)sizeof(int16_t)) {
+                if (!asr_send_chunk(&s_rec[s_sent], n - s_sent)) {
+                    ESP_LOGW(TAG, "chunk 发送失败, 本段跳过");
+                }
+                s_sent = n;
+            }
+#endif
             if (n >= REC_MAX_FRAMES) {
                 bsp_audio_in_stop();
                 s_state = R_READY;
 #if CONFIG_S6_MIC_SERIAL_DUMP
-                serial_dump_pcm(n);
+                if (!wifi_link_got_ip()) serial_dump_pcm(n);
 #endif
-                ESP_LOGI(TAG, "10s 上限, 单击播放");
+#if CONFIG_S6_WIFI_ASR
+                if (wifi_link_got_ip()) {
+                    if (n > s_sent) asr_send_chunk(&s_rec[s_sent], n - s_sent);
+                    finalize_asr();
+                }
+#endif
+                ESP_LOGI(TAG, "60s 上限");
             }
         }
     }

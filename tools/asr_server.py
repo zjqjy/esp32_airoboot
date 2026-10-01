@@ -25,6 +25,7 @@ ap.add_argument("--model", default="small", help="tiny/base/small")
 args = ap.parse_args()
 
 RECORDS = []          # [{ts, dur, text, wav_id}]
+SESSION = bytearray()  # 流式会话: /chunk 累积, X-Final 识别后清空
 LOCK = threading.Lock()
 WAV_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "asr_wavs")
 os.makedirs(WAV_DIR, exist_ok=True)
@@ -32,11 +33,14 @@ os.makedirs(WAV_DIR, exist_ok=True)
 _whisper = None
 
 def get_model():
+    """FunASR Paraformer (中文优, CPU 亲和) — 复用 media/cut 技能同款模型配置.
+    模型走 ModelScope 国内 CDN, 首跑共下载 ~1.2G 后走本地缓存 (下载时关 VPN)."""
     global _whisper
     if _whisper is None:
-        from faster_whisper import WhisperModel
-        print(f"加载 whisper 模型 {args.model} (首次运行会下载)...", flush=True)
-        _whisper = WhisperModel(args.model, device="cpu", compute_type="int8")
+        from funasr import AutoModel
+        print("加载 FunASR paraformer-zh (首次运行下载 ~1.2G, 之后走缓存)...", flush=True)
+        _whisper = AutoModel(model="paraformer-zh", vad_model="fsmn-vad",
+                             punc_model="ct-punc-c", disable_update=True)
     return _whisper
 
 def pcm_to_wav_bytes(pcm):
@@ -57,10 +61,8 @@ def process(pcm, wav_id):
     text = ""
     try:
         m = get_model()
-        tmp = io.BytesIO(wav_bytes)
-        tmp.name = "r.wav"
-        segments, info = m.transcribe(tmp, language="zh", vad_filter=True)
-        text = "".join(s.text for s in segments).strip()
+        res = m.generate(input=fn, batch_size_s=30)
+        text = "".join(r.get("text", "") for r in res).strip()
     except Exception as e:
         print("识别出错:", e, flush=True)
     rec = {
@@ -98,12 +100,15 @@ async function refresh() {
   try {
     const r = await fetch("/records");
     const j = await r.json();
-    const sig = JSON.stringify(j.map(x => x.wav_id + x.text));
+    const st = document.getElementById("st");
+    st.textContent = j.live > 0 ? `● 正在传输 ${(j.live / 1024).toFixed(0)} KB` : "● 实时";
+    st.style.color = j.live > 0 ? "#ffd54d" : "#3ddc84";
+    const sig = JSON.stringify(j.records.map(x => x.wav_id + x.text)) + j.live;
     if (sig === last) return;
     last = sig;
     const el = document.getElementById("list");
-    el.innerHTML = j.length ? "" : '<div class="empty">等一段录音…</div>';
-    for (const rec of j) {
+    el.innerHTML = j.records.length ? "" : '<div class="empty">等一段录音…（对板子单击录音 → 说话 → 再单击）</div>';
+    for (const rec of j.records) {
       const div = document.createElement("div");
       div.className = "card";
       div.innerHTML = `<span class="ts">${rec.ts}</span><span class="dur">${rec.dur}s</span>
@@ -120,8 +125,24 @@ refresh();
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         ln = int(self.headers.get("Content-Length", 0))
-        pcm = self.rfile.read(ln)
-        print(f"收到 {ln} 字节 PCM", flush=True)
+        body = self.rfile.read(ln)
+        is_chunk = self.headers.get("X-Chunk") == "1"
+        is_final = self.headers.get("X-Final") == "1"
+        if is_chunk:
+            with LOCK:
+                SESSION.extend(body)
+            print(f"[流式] +{ln}B, 会话累计 {len(SESSION)}B", flush=True)
+            resp = b'{"ok":true}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(resp)))
+            self.end_headers()
+            self.wfile.write(resp)
+            return
+        # /asr: X-Final = 识别流式会话; 无头 = 整段模式 (旧固件兼容)
+        pcm = bytes(SESSION) if (is_final and SESSION) else body
+        with LOCK:
+            SESSION.clear()
+        print(f"收到 {ln}B, 识别 {len(pcm)}B PCM...", flush=True)
         wav_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         resp = '{"text":"识别中"}'.encode("utf-8")
         self.send_response(200)
@@ -141,7 +162,8 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         elif self.path == "/records":
             with LOCK:
-                body = json.dumps(RECORDS, ensure_ascii=False).encode("utf-8")
+                body = json.dumps({"records": RECORDS, "live": len(SESSION)},
+                                  ensure_ascii=False).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))

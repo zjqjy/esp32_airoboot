@@ -21,7 +21,7 @@ extern "C" {
 #define MIC_SAMPLE_RATE     16000   /* 语音链路标准采样率 */
 #define MIC_DMA_FRAMES      240     /* 每描述符帧数: 16kHz 下 15ms/块 */
 #define MIC_DMA_DESC        6       /* 6 块 = 90ms 硬件缓冲 */
-#define MIC_RING_FRAMES     4096    /* 环形缓冲容量 (帧), 2 的幂 = 256ms */
+#define MIC_RING_FRAMES     8192    /* 环形缓冲容量 (帧), 2 的幂 = 512ms (流式 POST 余量) */
 
 /* 初始化 I2S0 + 启动 audio_in_task. 完成后采集未开流, 采集用 start. */
 esp_err_t bsp_audio_in_init(void);
