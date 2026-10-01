@@ -1,0 +1,11 @@
+menu "S5 Audio"
+
+config S5_AUDIO_SELFTEST
+    bool "开机自检: 440Hz 正弦 + 台词 WAV 播放"
+    default y
+    help
+        上电后播 440Hz 2s (S5-A 验收: 调音器对音准), 再依次播放
+        /assets/t1~t3.wav (S5-C/D 验收). 无 assets 分区时跳过 WAV 段.
+        正式发布可关闭.
+
+endmenu

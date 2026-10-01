@@ -49,3 +49,4 @@
 - **[2026-09-14]** S2-A 验收通过（HVR-S2-A-01）：字节序大端发送 + 偏移20 两定论；视频素材已攒够（踩坑实录见 .em/problem-log.md 1~6 条）
 - **[2026-09-21]** MAX98357 模块数据手册确认（.em/learning/MAX98357）：VIN 2.5~5.5V → 挂 5V（8Ω 出 1.8W@10%THD / 1.4W@1%THD，3.3V 仅 ~0.7W）；增益实为 3/6/9/12/15dB 五档（GAIN 悬空=9dB，100kΩ→GND=15dB，**无 18dB 档**，已修正 BSP_PLAN/ARCHITECTURE）；SD 拉低=关断 0.6µA 兼声道选择，模块默认经板上拉=左声道；LRCLK 仅支持 8/16/32/44.1/48/88.2/96kHz；待机 340µA（BCLK 停），省电走 SD 关断
 - **[2026-09-21]** 知识归口 .em：设计文档 docs/ 五件套（ARCHITECTURE/BSP_PLAN/MVP/PRODUCT/cat_player_讲解 + img）整体迁入 `.em/docs/`（git mv 保留历史），.gitignore 改 `.em/*` + `!/.em/docs/` 白名单保持 git 跟踪；手册类原始资料+要点笔记在 `.em/learning/`。此后设计文档、学习资料只维护 .em 一处，不再分 docs/ 散放
+- **[2026-10-01]** S5 喇叭驱动代码完成（方案 B：事件驱动+环形缓冲）：bsp/audio/ 4096帧环形缓冲 + audio_task核1优先级20 + underrun静音；assets 只读挂载 + 3句占位提示音（TTS 后替换）；开机自检默认开（menuconfig 可关）。上板验收待接线（引脚占位 BCLK=12/LRCK=13/DIN=14/SD=15）

@@ -5,9 +5,11 @@ idf_component_register(
     SRCS "main.c" "led_strip_encoder.c"
          "bsp/lcd_esp/lcd_esp.c"
          "bsp/lcd/touch.c"
+         "bsp/audio/bsp_audio_out.c"
          "bsp/led/led_status.c"
          "cat/cat_player_lvgl.c" "cat/cat_lvgl_assets.c"
-    INCLUDE_DIRS "." "bsp" "bsp/lcd" "bsp/lcd_esp" "bsp/led" "cat"
+    INCLUDE_DIRS "." "bsp" "bsp/lcd" "bsp/lcd_esp" "bsp/led" "bsp/audio" "cat"
     PRIV_REQUIRES esp_driver_rmt esp_driver_spi esp_driver_gpio esp_driver_i2c
-                  esp_timer heap esp_lcd lvgl__lvgl espressif__esp_lvgl_port
+                  esp_driver_i2s esp_timer heap esp_lcd lvgl__lvgl espressif__esp_lvgl_port
+                  fatfs wear_levelling esp_partition vfs
 )

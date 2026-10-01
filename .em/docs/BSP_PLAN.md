@@ -10,7 +10,7 @@
 | WS2812B | DIN | 48 | ✅ 已验证 |
 | LCD | MOSI=3 / SCLK=2 / CS=7 / DC=18 / RST=21 / BLK=1 | - | ✅ S2-A 已点亮 (偏移20, 240x280, 大端) |
 | 触摸 | SDA=4 / SCL=5 / INT=6 / RST=10 | - | 接线✅, 驱动待 S2-C |
-| MAX98357 | 模块脚序 VIN/GND/SD/GAIN/DIN/BCLK/LRC；VIN→5V，SD→GPIO（拉低关断），GAIN 接法定（见 D3）；ESP32 侧 GPIO | ? | 模块/接法已定 ✅，GPIO 待原理图 (D3) |
+| MAX98357 | 模块 VIN/GND/SD/GAIN/DIN/BCLK/LRC；VIN→5V，SD→GPIO15，GAIN→GND(12dB)；ESP32: BCLK=12/LRCK=13/DIN=14（宏占位，接线后核对登记） | 占位 12/13/14/15 | 代码完成 (S5)，实物接线待核对 |
 | INMP441 | SCK / WS / SD / L_R | ? | ⬜ 待原理图 (D4) |
 
 ## D1. LCD 显示（ST7789 · SPI）— 「点亮第一块屏」
