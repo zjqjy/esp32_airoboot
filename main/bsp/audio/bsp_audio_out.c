@@ -85,7 +85,9 @@ static void task_move_chunk(void)
 static void audio_task(void *arg)
 {
     while (1) {
-        task_move_chunk();
+        if (s_enabled) {
+            task_move_chunk();
+        }
         vTaskDelay(pdMS_TO_TICKS(5));       /* 90ms 硬件缓冲, 5ms 巡检绰绰有余 */
     }
 }
@@ -173,8 +175,8 @@ esp_err_t bsp_audio_out_play_sine(uint32_t duration_ms)
     for (int i = 0; i < TONE_N; i++) {
         tone[i] = (int16_t)(12000.0f * sinf(2.0f * (float)M_PI * 440.0f * i / AUDIO_SAMPLE_RATE));
     }
+    bsp_audio_out_start();                  /* stop 后重播: 幂等使能 */
     s_state = STREAMING;
-    bsp_audio_out_mute(false);
     uint32_t loops = duration_ms / (TONE_N * 1000 / AUDIO_SAMPLE_RATE);
     for (uint32_t i = 0; i < loops; i++) {
         esp_err_t err = bsp_audio_out_write(tone, TONE_N, 1000);
@@ -208,8 +210,8 @@ esp_err_t bsp_audio_out_play_wav(const char *path)
         return ESP_ERR_NOT_SUPPORTED;
     }
 
+    bsp_audio_out_start();                  /* stop 后重播: 幂等使能 */
     s_state = STREAMING;
-    bsp_audio_out_mute(false);
     enum { BUF_N = 1024 };
     static int16_t buf[BUF_N];
     esp_err_t ret = ESP_OK;
