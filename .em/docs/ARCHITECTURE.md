@@ -76,7 +76,7 @@ main/
       ─→ Opus 编码(16kHz mono ~24kbps) ─→ WebSocket 二进制帧 → 云端 ASR
 
 播放: 云端 TTS(Opus/MP3 流) ─→ 解码 16kHz/16bit PCM ─→ 环形缓冲
-      ─→ I2S1 TX ─→ MAX98357A ─→ 3718 喇叭(8Ω 2W, GAIN 引脚决定 9/12/15/18dB)
+      ─→ I2S1 TX ─→ MAX98357A ─→ 3718 喇叭(8Ω 2W, GAIN 引脚决定 3/6/9/12/15dB)
 ```
 
 - INMP441: L/R 引脚接 GND = 左声道；SCK/WS/SD 三线 I2S（Philips 16-bit slot，标准模式）
@@ -126,5 +126,5 @@ assets,   data, spiffs,  0x820000, 0x7E0000  # ~7.9MB 表情/字体/语音包
 1. **LCD/触摸驱动 IC 未确认** — 拿到原理图后定 ST7789/GC9A01 与 CST816/FT 系列
 2. **I2S/SPI/I2C 引脚未分配** — 需原理图；注意 LCD SPI 用 GPSPI2，避开 Flash 所用总线
 3. **3.3V 驱动 WS2812B 电平临界** — 已跑通，量产建议 74HCT245
-4. **喇叭 2W vs MAX98357 3.2W** — 功率匹配 OK，注意 GAIN 引脚别接 18dB 削波
+4. **喇叭 2W vs MAX98357 3.2W** — 功率匹配 OK，注意 GAIN 引脚别接 15dB（100kΩ→GND）削波；模块 PVDD 建议挂 5V（3.3V 下 8Ω 仅 ~0.7W@10%THD）
 5. **云端协议选型** — 建议对齐 xiaozhi-esp32 的 WebSocket 协议，服务端生态现成（开源服务器可自部署）

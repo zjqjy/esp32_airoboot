@@ -77,8 +77,9 @@ Desktop.ini
 *.suo       # Visual Studio Solution User Options
 *.sln.docstates # Visual Studio
 
-# EM 项目管理工具
-.em/
+# EM 项目管理工具（.em 整体忽略；docs 设计文档迁入 .em/docs 后开白名单保持 git 跟踪）
+.em/*
+!/.em/docs/
 
 # VSCode 本机配置（含串口号、工具链绝对路径）
 .vscode/

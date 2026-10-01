@@ -10,7 +10,7 @@
 | WS2812B | DIN | 48 | ✅ 已验证 |
 | LCD | MOSI=3 / SCLK=2 / CS=7 / DC=18 / RST=21 / BLK=1 | - | ✅ S2-A 已点亮 (偏移20, 240x280, 大端) |
 | 触摸 | SDA=4 / SCL=5 / INT=6 / RST=10 | - | 接线✅, 驱动待 S2-C |
-| MAX98357 | BCLK / LRCK / DIN / GAIN / SD | ? | ⬜ 待原理图 (D3) |
+| MAX98357 | 模块脚序 VIN/GND/SD/GAIN/DIN/BCLK/LRC；VIN→5V，SD→GPIO（拉低关断），GAIN 接法定（见 D3）；ESP32 侧 GPIO | ? | 模块/接法已定 ✅，GPIO 待原理图 (D3) |
 | INMP441 | SCK / WS / SD / L_R | ? | ⬜ 待原理图 (D4) |
 
 ## D1. LCD 显示（ST7789 · SPI）— 「点亮第一块屏」
@@ -43,7 +43,7 @@ SPI mode 0/3 选择；PSRAM 缓冲要 `ESP_CACHE_MALIGNED_SIZE` 对齐否则 DMA
 ## D3. 音频输出（MAX98357 · I2S TX）— 「它开口了」
 
 **视频讲解点**：I2S 三根线各是什么（BCLK/LRCK/DATA）/ 为什么 MAX98357 不需要 MCLK /
-16bit 标准模式 vs 左对齐 / GAIN 引脚电平=增益档位（9/12/15/18dB）/ SD 引脚=声道选择+关断
+16bit 标准模式 vs 左对齐 / GAIN 引脚电平=增益档位（数据手册实为 3/6/9/12/15dB 五档，悬空默认 9dB，无 18dB 档）/ SD 引脚=声道选择+关断
 
 **实现路径**：
 1. `i2s_std` TX 通道 16kHz/16bit/mono，先播 440Hz 正弦波（数组生成，无文件依赖）
@@ -52,7 +52,8 @@ SPI mode 0/3 选择；PSRAM 缓冲要 `ESP_CACHE_MALIGNED_SIZE` 对齐否则 DMA
 
 **验收**：正弦波音调准确（对调音器 app），WAV 台词清晰，音量旋钮级合理（GAIN 选 12dB 起步）
 **已知坑**：爆音=采样率不匹配或缓冲欠载（双 buffer+重采样对齐）；嗡嗡声=共地问题；
-声音发闷=LRCK 极性反了（左右声道混叠）；2W 喇叭+18dB 增益会削波失真
+声音发闷=LRCK 极性反了（左右声道混叠）；2W 喇叭+15dB（100kΩ 接 GND）增益会削波失真；
+LRCLK 只支持 8/16/32/44.1/48/88.2/96kHz（11.025/12/22.05/24k 不支持）；BCLK 在跑时严禁撤掉 LRCLK（会输出大直流烧喇叭），停播用 SD 拉低而非只停时钟
 
 ## D4. 音频输入（INMP441 · I2S RX）— 「它听得见了」
 

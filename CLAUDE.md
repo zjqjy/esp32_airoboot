@@ -37,13 +37,15 @@
 ## 历史问题记录（决策日志）
 - **[2026-09-13]** ESP-IDF 6.1 移除主仓 `led_strip` 组件 → RMT TX + 官方 led_strip_encoder 模式
 - **[2026-09-13]** WS2812B 3.3V 电平临界但已跑通；BRIGHTNESS=30（用户嫌太亮）
-- **[2026-09-14]** 硬件定型（mic/功放/喇叭/屏/触摸），完成系统架构设计 → 见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- **[2026-09-14]** 硬件定型（mic/功放/喇叭/屏/触摸），完成系统架构设计 → 见 [.em/docs/ARCHITECTURE.md](.em/docs/ARCHITECTURE.md)
 
 ## 禁忌（红线）
 - 不烧录 `SWD_LOCK` 类误配置（历史上 J-Link 解锁过一次）
 - 不修改 `sdkconfig` 后不重编译直接烧录
-- **[2026-09-14]** 产品定位确定：AI 编程搭子（agent 事件播报+情绪反馈），非通用语音陪伴；调研见 [docs/PRODUCT.md](docs/PRODUCT.md)。路线调整：S4=bridge+事件播报（预合成MP3，无云端依赖），云端语音对话移至 S5
+- **[2026-09-14]** 产品定位确定：AI 编程搭子（agent 事件播报+情绪反馈），非通用语音陪伴；调研见 [.em/docs/PRODUCT.md](.em/docs/PRODUCT.md)。路线调整：S4=bridge+事件播报（预合成MP3，无云端依赖），云端语音对话移至 S5
 - **[2026-09-14]** Flash 分区改单 factory（砍双 OTA）：无存量设备、开发靠 USB，5MB 让给 assets 语音包；开源发布做远程升级时再切双 OTA
-- **[2026-09-14]** MVP 方案定稿（docs/MVP.md）：4 状态闭环（working/waiting/done/idle），砍麦克风+WiFi+触摸+图片资源，USB 串口直连 bridge，语音用预合成 WAV；M1 前置条件=确认 LCD 驱动 IC 和引脚
-- **[2026-09-14]** 执行顺序调整：先做全硬件驱动层 D1~D5（docs/BSP_PLAN.md，含 MVP 用不到的触摸/麦克风，自媒体逐期拍摄），后进 MVP 集成；引脚登记表维护在 BSP_PLAN.md
+- **[2026-09-14]** MVP 方案定稿（.em/docs/MVP.md）：4 状态闭环（working/waiting/done/idle），砍麦克风+WiFi+触摸+图片资源，USB 串口直连 bridge，语音用预合成 WAV；M1 前置条件=确认 LCD 驱动 IC 和引脚
+- **[2026-09-14]** 执行顺序调整：先做全硬件驱动层 D1~D5（.em/docs/BSP_PLAN.md，含 MVP 用不到的触摸/麦克风，自媒体逐期拍摄），后进 MVP 集成；引脚登记表维护在 BSP_PLAN.md
 - **[2026-09-14]** S2-A 验收通过（HVR-S2-A-01）：字节序大端发送 + 偏移20 两定论；视频素材已攒够（踩坑实录见 .em/problem-log.md 1~6 条）
+- **[2026-09-21]** MAX98357 模块数据手册确认（.em/learning/MAX98357）：VIN 2.5~5.5V → 挂 5V（8Ω 出 1.8W@10%THD / 1.4W@1%THD，3.3V 仅 ~0.7W）；增益实为 3/6/9/12/15dB 五档（GAIN 悬空=9dB，100kΩ→GND=15dB，**无 18dB 档**，已修正 BSP_PLAN/ARCHITECTURE）；SD 拉低=关断 0.6µA 兼声道选择，模块默认经板上拉=左声道；LRCLK 仅支持 8/16/32/44.1/48/88.2/96kHz；待机 340µA（BCLK 停），省电走 SD 关断
+- **[2026-09-21]** 知识归口 .em：设计文档 docs/ 五件套（ARCHITECTURE/BSP_PLAN/MVP/PRODUCT/cat_player_讲解 + img）整体迁入 `.em/docs/`（git mv 保留历史），.gitignore 改 `.em/*` + `!/.em/docs/` 白名单保持 git 跟踪；手册类原始资料+要点笔记在 `.em/learning/`。此后设计文档、学习资料只维护 .em 一处，不再分 docs/ 散放
