@@ -20,6 +20,7 @@
 #include "bsp/audio/bsp_audio_out.h"
 #include "bsp/audio/bsp_audio_in.h"
 #include "wifi_link.h"
+#include "disp_test.h"
 #include "mic_recorder.h"
 
 static const char *TAG = "s4_lvgl";
@@ -85,6 +86,9 @@ void app_main(void)
 
     ESP_ERROR_CHECK(lcd_esp_init());
     led_status_set(0, 255, 0);                  /* 绿 = LCD OK */
+#ifdef CONFIG_S6_DISP_TEST
+    disp_test_run();                            /* LVGL 接管前独占面板自检 (S6-D 排障) */
+#endif
     ESP_ERROR_CHECK(touch_init());
 
     /* LVGL 移植层: 任务+tick 由 esp_lvgl_port 托管 */
@@ -112,7 +116,9 @@ void app_main(void)
     }
 
     cat_player_lvgl_start();                    /* 注册控件与定时器后返回 */
-    wifi_link_start();                          /* WiFi 连接异步进行 (S6 语音识别用) */
+#if CONFIG_S6_WIFI_ASR
+    wifi_link_start();                          /* WiFi 连接异步进行 (S6 语音识别用; 关 ASR 则不连网) */
+#endif
     /* 此后 LVGL 任务接管渲染, app_main 返回无害 */
 
 #ifdef CONFIG_S5_AUDIO_SELFTEST

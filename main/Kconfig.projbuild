@@ -1,3 +1,15 @@
+menu "S6 Display"
+
+config S6_DISP_TEST
+    bool "开机屏幕链路自检: 背光明灭/纯色/灰阶/彩条 (LVGL 前直写面板)"
+    default y
+    help
+        上电先绕开 LVGL 直写 esp_lcd: 背光明灭 3 次 → 红/绿/蓝/白/黑 →
+        左黑右白灰阶 → 8 竖彩条; 串口 (disp_test) 每步打印预期画面.
+        用于隔离 背光排线 / SPI+面板初始化 / 字节序 问题, 排查完可关.
+
+endmenu
+
 menu "S5 Audio"
 
 config S5_AUDIO_SELFTEST
@@ -27,12 +39,13 @@ config S6_MIC_SELFTEST
         RMS 显著升高 = INMP441 硬件通. 正式发布可关闭.
 
 config S6_MIC_ECHO_TEST
-    bool "触摸录音机: 单击屏幕录音/再击播放 (S6-C 验收, 需 S5 喇叭已接线)"
+    bool "触摸录音机: 单击录音, 停录喇叭回放 (S7, 需 S5 喇叭已接线)"
     default y
     help
-        全屏录音机界面 (状态大字 + 实时电平条): 单击开始录音, 再单击停止
-        并经 MAX98357 回放, 循环使用. 单段上限 10s (PSRAM), 回放软件增益 x8,
-        播放期间停麦 (半双工) 防啸叫. 猫动画暂停被本界面接管; 重启退出.
+        全屏录音机界面 (状态大字 + 实时电平条): 单击开始录音, 再单击停止.
+        停录后经 MAX98357 本地回放 (旁路增益, 不动录音数据), 单段上限 60s
+        (PSRAM). 播放期间停麦 (半双工) 防啸叫. 猫动画暂停被本界面接管;
+        重启退出. 60s 录满后转"已录"待击, 单击再回放.
 
 config S6_MIC_SERIAL_DUMP
     bool "录音结束经串口导出 PCM (PC 存 WAV / 语音识别)"
@@ -45,8 +58,9 @@ config S6_WIFI_ASR
     bool "录音后经 WiFi 发 PC 识别, 文字显示在气泡"
     default y
     help
-        录音停止后把 PCM 以 HTTP POST 发到识别服务, 返回的文字显示在
-        屏幕气泡. 需电脑运行 tools/asr_server.py 且与板子同一 WiFi.
+        与本地回放共存 (S7): 录音中流式分块上传, 停录先补尾巴, 喇叭回放完
+        再 X-Final 触发识别, 文字显示在屏幕气泡. 需电脑运行 tools/asr_server.py
+        且与板子同一 WiFi.
 
 config S6_WIFI_SSID
     string "WiFi SSID"

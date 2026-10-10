@@ -53,7 +53,8 @@ def pcm_to_wav_bytes(pcm):
     return buf.getvalue()
 
 def process(pcm, wav_id):
-    """识别 + 登记 (后台线程跑, 不阻塞 HTTP 响应之外的请求)"""
+    """识别 + 登记 + 返回文字. X-Final 同步调用: 响应直出真文字给板子
+    (S7-C; ThreadingHTTPServer 多线程, 识别期间网页轮询/分块上传不受阻)"""
     wav_bytes = pcm_to_wav_bytes(pcm)
     fn = os.path.join(WAV_DIR, f"{wav_id}.wav")
     with open(fn, "wb") as f:
@@ -75,6 +76,7 @@ def process(pcm, wav_id):
         RECORDS.insert(0, rec)
         del RECORDS[50:]
     print(f"[ASR] {wav_id} {rec['dur']}s: {rec['text']}", flush=True)
+    return rec["text"]
 
 PAGE = """<!DOCTYPE html>
 <html lang="zh"><head><meta charset="utf-8">
@@ -144,13 +146,13 @@ class Handler(BaseHTTPRequestHandler):
             SESSION.clear()
         print(f"收到 {ln}B, 识别 {len(pcm)}B PCM...", flush=True)
         wav_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        resp = '{"text":"识别中"}'.encode("utf-8")
+        text = process(pcm, wav_id)     # 同步识别 (S7-C): 板子气泡直接拿真文字, 不再停"识别中"
+        resp = json.dumps({"text": text}, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(resp)))
         self.end_headers()
         self.wfile.write(resp)
-        threading.Thread(target=process, args=(pcm, wav_id), daemon=True).start()
 
     def do_GET(self):
         if self.path == "/" or self.path.startswith("/index"):

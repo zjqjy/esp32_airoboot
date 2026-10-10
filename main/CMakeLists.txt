@@ -7,6 +7,7 @@ idf_component_register(
          "wifi_link.c"
          "fonts/lv_font_rec_16.c"
          "bsp/lcd_esp/lcd_esp.c"
+         "bsp/disp_test.c"
          "bsp/lcd/touch.c"
          "bsp/audio/bsp_audio_out.c"
          "bsp/audio/bsp_audio_in.c"

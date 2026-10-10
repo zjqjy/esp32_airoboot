@@ -58,7 +58,7 @@ def gen_wavs():
 
 def gen_fat():
     cmd = [sys.executable, FATFSGEN,
-           "--partition_size", str(256 * 1024),
+           "--partition_size", str(6 * 1024 * 1024),   # S7: 扩到 assets 分区全量 6M (放歌曲, ~190s)
            "--output_file", IMG,
            WAV_DIR]
     subprocess.run(cmd, check=True)

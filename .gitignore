@@ -89,3 +89,9 @@ main/cat/preview/
 
 # lvgl-mcp 本机注册 (含绝对路径, 不入库)
 .mcp.json
+
+# S7 大媒体文件 (歌源/中间产物可再生: tools/song2wav.py; asr_wavs=asr_server 录音, mnt=FAT 镜像挂载目录)
+tools/_song.m4a
+tools/assets_wav/song.wav
+/asr_wavs/
+/mnt/

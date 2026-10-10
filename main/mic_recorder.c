@@ -1,10 +1,11 @@
 /*
- * mic_recorder.c — S6-C 触摸录音机 (单击屏幕录音 / 再击播放)
+ * mic_recorder.c — S6-C 触摸录音机 → S7 录音回放+识别共存
  * 界面: 全屏录音机 (状态大字 + 实时电平条), 单击 = 录音/播放切换
+ * 停录收尾 (S7 方案 B): 尾巴 chunk 先上识别服务器 → 喇叭本地回放 → X-Final
  * 分工: worker 任务做音频 (录音入 PSRAM / 回放), LVGL 定时器只做
  *   触摸检测与 UI 刷新 — 回放阻塞不拖渲染, 触摸轮询不占 worker
  * 半双工: 回放期间停麦 (bsp_audio_in_stop), 防啸叫与自触发
- * 单段上限 10s (PSRAM 320KB), 到顶自动待播; 回放软件增益 ×8
+ * 单段上限 60s (PSRAM 1.92MB); 回放旁路增益 x8, 峰值过大自动降 (不碰 s_rec)
  */
 #include <string.h>
 #include <stdio.h>
@@ -28,11 +29,12 @@
 static const char *TAG = "mic_rec";
 
 /* ---- 共享状态 (worker 独写, LVGL 定时器只读; volatile 单写者够用) ---- */
-typedef enum { R_IDLE, R_REC, R_READY, R_PLAY } rec_state_t;
+typedef enum { R_IDLE, R_REC, R_READY, R_PLAY, R_SONG } rec_state_t;
 static volatile rec_state_t s_state = R_IDLE;
 static volatile uint32_t s_rec_ms;      /* 本段已录时长 */
 static volatile int32_t  s_rms;         /* 实时电平 (UI 电平条) */
 static volatile bool     s_cmd;         /* 触摸定时器 → worker 切换请求 */
+static volatile bool     s_song_cmd;    /* 长按: 空闲=播歌曲 / 歌曲中=停止 */
 
 /* ---- 录音参数 ---- */
 #define REC_CHUNK      160              /* 10ms @16kHz */
@@ -79,12 +81,13 @@ static void serial_dump_pcm(size_t frames)
 }
 #endif
 
+static size_t s_sent;                   /* 已流式发出的帧数 (ASR 关时恒 0) */
+static bool s_final_done;               /* 本段识别已触发, 防重复 */
+
 #if CONFIG_S6_WIFI_ASR
 /* 流式: 录音中每 250ms 把新片段 POST 给 PC (X-Chunk), 终止时 X-Final 触发识别 */
 static char s_asr_text[48];
 static volatile bool s_asr_new;
-static size_t s_sent;                   /* 已流式发出的帧数 */
-static bool s_final_done;               /* 60s 自动收尾后, 再单击不重复识别 */
 
 static bool asr_send_chunk(const int16_t *frames, size_t n)
 {
@@ -124,8 +127,11 @@ static void finalize_asr(void)
 }
 #endif
 
+/* 回放: 旁路增益 — 写 I2S 时缩放, s_rec 保持原样 (S7: 尾巴 PCM 还要发识别).
+ * 峰值会削顶时自动降增益; 峰值<500 基本等于没录到声音 */
 static void playback(size_t n)
-{    if (n == 0) {
+{
+    if (n == 0) {
         return;
     }
     int16_t pk = 0;
@@ -133,24 +139,94 @@ static void playback(size_t n)
         int16_t a = (s_rec[i] >= 0) ? s_rec[i] : (int16_t)-s_rec[i];
         if (a > pk) pk = a;
     }
-    ESP_LOGI(TAG, "回放 %lu ms, 录制峰值 %d (峰值<500 基本等于没录到声音)",
-             (unsigned long)((uint64_t)n * 1000 / MIC_SAMPLE_RATE), pk);
-    for (size_t i = 0; i < n; i++) {
-        int32_t v = (int32_t)s_rec[i] * REC_GAIN;
-        if (v > 32767) v = 32767;
-        if (v < -32768) v = -32768;
-        s_rec[i] = (int16_t)v;
+    int gain = REC_GAIN;
+    if (pk > 0 && pk * REC_GAIN > 30000) {
+        gain = 30000 / pk;
+        if (gain < 1) gain = 1;
     }
+    ESP_LOGI(TAG, "回放 %lu ms, 峰值 %d, 增益 x%d",
+             (unsigned long)((uint64_t)n * 1000 / MIC_SAMPLE_RATE), pk, gain);
     while (bsp_audio_out_busy()) {      /* 避让 S5 自检正在播的段 */
         vTaskDelay(pdMS_TO_TICKS(100));
     }
     ESP_ERROR_CHECK(bsp_audio_out_start());
+    int16_t buf[1024];
     for (size_t off = 0; off < n; off += 1024) {
         size_t take = (n - off > 1024) ? 1024 : n - off;
-        if (bsp_audio_out_write(&s_rec[off], take, 2000) != ESP_OK) break;
+        for (size_t i = 0; i < take; i++) {
+            int32_t v = (int32_t)s_rec[off + i] * gain;
+            if (v > 32767) v = 32767;
+            if (v < -32768) v = -32768;
+            buf[i] = (int16_t)v;
+        }
+        if (bsp_audio_out_write(buf, take, 2000) != ESP_OK) break;
     }
     bsp_audio_out_drain(3000);
     bsp_audio_out_stop();
+}
+
+/* 停录收尾统一入口 (S7 方案 B): 尾巴先上识别服务器 → 喇叭本地回放 → X-Final.
+ * 回放旁路增益不碰 s_rec, 所以先发尾巴还是先回放都不伤数据; 识别文字回 UI 气泡 */
+static void finish_and_play(size_t n)
+{
+#if CONFIG_S6_WIFI_ASR
+    if (wifi_link_got_ip() && n > s_sent) {
+        asr_send_chunk(&s_rec[s_sent], n - s_sent);
+        s_sent = n;
+    }
+#endif
+    s_state = R_PLAY;
+    playback(n);
+    s_state = R_IDLE;                   /* UI 先回待机, 文字到了再进气泡 */
+#if CONFIG_S6_WIFI_ASR
+    if (wifi_link_got_ip() && !s_final_done) {
+        finalize_asr();
+        s_final_done = true;
+    }
+#endif
+}
+
+/* 长按播放 /assets/song.wav (16k/mono/16bit PCM): 播放中再长按停止.
+ * 不用 bsp_audio_out_play_wav: 它阻塞整曲无法打断, 这里自管流式 + 每块查停 */
+static void song_play(void)
+{
+    bsp_assets_mount();                 /* 幂等; 覆盖自检关闭时未挂载的情况 */
+    FILE *f = fopen("/assets/song.wav", "rb");
+    if (f == NULL) {
+        ESP_LOGW(TAG, "没找到 /assets/song.wav (tools/song2wav.py + gen_tts_wavs.py fat + flash_assets.bat)");
+        return;
+    }
+    uint8_t hdr[44];
+    if (fread(hdr, 1, sizeof(hdr), f) != sizeof(hdr) ||
+        memcmp(hdr, "RIFF", 4) || memcmp(hdr + 8, "WAVEfmt ", 8) ||
+        (hdr[20] | (hdr[21] << 8)) != 1 ||                    /* PCM */
+        (hdr[22] | (hdr[23] << 8)) != 1 ||                    /* mono */
+        (hdr[24] | (hdr[25] << 8) | (hdr[26] << 16) | (hdr[27] << 24)) != MIC_SAMPLE_RATE ||
+        (hdr[34] | (hdr[35] << 8)) != 16) {
+        fclose(f);
+        ESP_LOGW(TAG, "song.wav 参数不符: 需 PCM/mono/16k/16bit");
+        return;
+    }
+    uint32_t total = (hdr[40] | (hdr[41] << 8) | (hdr[42] << 16) | (uint32_t)hdr[43] << 24) / 2;
+    ESP_LOGI(TAG, "歌曲 %lu s, 长按停止", (unsigned long)(total / MIC_SAMPLE_RATE));
+    s_state = R_SONG;                   /* 半双工: 歌曲期间停麦 */
+    bsp_audio_in_stop();
+    while (bsp_audio_out_busy()) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    ESP_ERROR_CHECK(bsp_audio_out_start());
+    static int16_t buf[1024];
+    size_t r, played = 0;
+    while (!s_song_cmd && (r = fread(buf, sizeof(int16_t), 1024, f)) > 0) {
+        if (bsp_audio_out_write(buf, r, 2000) != ESP_OK) break;
+        played += r;
+    }
+    fclose(f);
+    bsp_audio_out_drain(3000);
+    bsp_audio_out_stop();
+    s_song_cmd = false;                 /* 停止请求就地消费, 防回待机后误触发重播 */
+    s_state = R_IDLE;
+    ESP_LOGI(TAG, "歌曲结束: 播了 %lu/%lu 帧", (unsigned long)played, (unsigned long)total);
 }
 
 static void rec_worker(void *arg)
@@ -178,35 +254,18 @@ static void rec_worker(void *arg)
                     serial_dump_pcm(n); /* 离线兜底: 串口导出 */
                 }
 #endif
-#if CONFIG_S6_WIFI_ASR
-                if (wifi_link_got_ip()) {
-                    if (n > s_sent) {
-                        asr_send_chunk(&s_rec[s_sent], n - s_sent);  /* 收尾片段 */
-                    }
-                    if (!s_final_done) {
-                        finalize_asr();     /* 触发识别 → 文字回气泡 */
-                        s_final_done = true;
-                    }
-                }
-#else
-                s_state = R_PLAY;
-                playback(n);
-#endif
-                s_state = R_IDLE;
+                finish_and_play(n);     /* 尾巴→喇叭回放→识别 (S7) */
             } else if (s_state == R_READY) {
-#if CONFIG_S6_WIFI_ASR
-                if (!s_final_done && wifi_link_got_ip()) {
-                    if (n > s_sent) asr_send_chunk(&s_rec[s_sent], n - s_sent);
-                    finalize_asr();
-                    s_final_done = true;
-                }
-#else
-                s_state = R_PLAY;
-                playback(n);
-#endif
-                s_state = R_IDLE;
+                finish_and_play(n);     /* 60s 到顶后单击: 同收尾流程 */
             }
             /* R_PLAY 中忽略连点 */
+        }
+
+        if (s_song_cmd) {               /* 长按: 空闲开播 (歌曲内部把同标志当停止) */
+            s_song_cmd = false;
+            if (s_state == R_IDLE) {
+                song_play();
+            }
         }
 
         /* 待机常开拾音: 示波条待机也能看, 1.4mA 代价可忽略 (回放态除外, 半双工) */
@@ -254,17 +313,17 @@ static void rec_worker(void *arg)
 #endif
             if (n >= REC_MAX_FRAMES) {
                 bsp_audio_in_stop();
-                s_state = R_READY;
+                s_state = R_READY;      /* 等单击回放 (不突然外放 60s) */
 #if CONFIG_S6_MIC_SERIAL_DUMP
                 if (!wifi_link_got_ip()) serial_dump_pcm(n);
 #endif
 #if CONFIG_S6_WIFI_ASR
-                if (wifi_link_got_ip()) {
-                    if (n > s_sent) asr_send_chunk(&s_rec[s_sent], n - s_sent);
-                    finalize_asr();
+                if (wifi_link_got_ip() && n > s_sent) {
+                    asr_send_chunk(&s_rec[s_sent], n - s_sent);   /* 数据先落服务器 */
+                    s_sent = n;
                 }
 #endif
-                ESP_LOGI(TAG, "60s 上限");
+                ESP_LOGI(TAG, "60s 上限, 单击回放");
             }
         }
     }
@@ -284,7 +343,8 @@ static const cat_anim_lvgl_t *const REC_CATS[] = {
     &CAT_A04_PEACH_BOWL,     /* R_IDLE  淡定吃碗 */
     &CAT_A03_PEACH_LOOK,     /* R_REC   停下抬头盯你 (在听) */
     &CAT_A01_PEACHGOMA_CRY,  /* R_PLAY  听到自己录音吓哭 (白底拍立得) */
-    &CAT_A02_PEACH_FLOORCRY, /* R_READY 录满 10s 趴地崩溃 (白底拍立得) */
+    &CAT_A02_PEACH_FLOORCRY, /* R_READY 录满 60s 趴地崩溃 (白底拍立得) */
+    &CAT_A03_PEACH_LOOK,     /* R_SONG  盯着听歌 */
 };
 #define CAT_SCALE 154                  /* LVGL 256 = 1.0x → 220px 素材缩到 ~132px */
 
@@ -309,7 +369,8 @@ static void apply_state_ui(rec_state_t st)
         [R_IDLE]  = { "单击屏幕", "开始录音", 0x3A3A3A },
         [R_REC]   = { "录音中",   "",         0x3DDC84 },
         [R_PLAY]  = { "回放中",   "",         0x8B93FF },
-        [R_READY] = { "已录 10 s", "",        0xFFD60A },
+        [R_READY] = { "已录 60 s", "",        0xFFD60A },
+        [R_SONG]  = { "播放中",   "长按停",    0x8B93FF },
     };
     const cat_anim_lvgl_t *a = REC_CATS[st];
 
@@ -340,14 +401,22 @@ static void apply_state_ui(rec_state_t st)
 static void ui_timer_cb(lv_timer_t *t)
 {
     (void)t;
-    /* 触摸: 上升沿 + 300ms 冷却 → 请求切换 */
+    /* 触摸: 短按抬起=切换, 长按 600ms=歌曲, 300ms 冷却 */
     uint16_t tx, ty;
-    static bool was_down;
-    static int64_t last_tap;
+    static bool was_down, long_fired;
+    static int64_t press_t0, last_tap;
+    int64_t now = esp_timer_get_time();
     bool down = touch_read(&tx, &ty);
-    if (down && !was_down && esp_timer_get_time() - last_tap > 300 * 1000) {
-        s_cmd = true;
-        last_tap = esp_timer_get_time();
+    if (down && !was_down) {
+        press_t0 = now;
+        long_fired = false;
+    } else if (down && !long_fired && now - press_t0 > 600 * 1000) {
+        s_song_cmd = true;              /* 长按: 播/停歌曲 */
+        long_fired = true;
+    } else if (!down && was_down && !long_fired &&
+               now - last_tap > 300 * 1000) {
+        s_cmd = true;                   /* 短按: 录音/回放 */
+        last_tap = now;
     }
     was_down = down;
 
@@ -375,13 +444,15 @@ static void ui_timer_cb(lv_timer_t *t)
     lv_obj_invalidate(s_wave_line);
 
     /* PC 识别结果 → 气泡显示 (识别文字可能含生僻字, 换内置思源黑体) */
+#if CONFIG_S6_WIFI_ASR
     if (s_asr_new) {
         s_asr_new = false;
-#if CONFIG_S6_WIFI_ASR && CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_16_CJK
+#if CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_16_CJK
         lv_obj_set_style_text_font(s_bub_text, &lv_font_source_han_sans_sc_16_cjk, 0);
 #endif
         lv_label_set_text(s_bub_text, s_asr_text);
     }
+#endif
 
     /* 猫帧推进 (按素材 GIF 时序) */
     if (s_cat_anim != NULL) {
@@ -430,7 +501,7 @@ void mic_recorder_start(void)
     lv_obj_remove_style_all(bar);
     lv_obj_set_size(bar, 224, 30);
     lv_obj_align(bar, LV_ALIGN_TOP_MID, 0, 6);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0x17161C), 0);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(0x232229), 0);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(bar, 12, 0);
     lv_obj_t *ic = lv_label_create(bar);
@@ -440,7 +511,7 @@ void mic_recorder_start(void)
     lv_obj_align(ic, LV_ALIGN_LEFT_MID, 10, 0);
     lv_obj_t *title = lv_label_create(bar);
     lv_label_set_text(title, "录音机");
-    lv_obj_set_style_text_color(title, lv_color_hex(0xC8CAD0), 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 30, 0);
     s_tdot = lv_obj_create(bar);
     lv_obj_remove_style_all(s_tdot);
@@ -478,7 +549,7 @@ void mic_recorder_start(void)
 
     s_tm = lv_label_create(scr);
     lv_label_set_text(s_tm, "开始录音");
-    lv_obj_set_style_text_color(s_tm, lv_color_hex(0x9AA0A6), 0);
+    lv_obj_set_style_text_color(s_tm, lv_color_hex(0xDADDE2), 0);
     lv_obj_align(s_tm, LV_ALIGN_TOP_MID, 0, 62);
 
     /* 底部 assistant 气泡 (xiaozhi: bubble #222222) */
@@ -486,13 +557,13 @@ void mic_recorder_start(void)
     lv_obj_remove_style_all(bub);
     lv_obj_set_size(bub, 148, 34);
     lv_obj_align(bub, LV_ALIGN_BOTTOM_MID, 0, -16);
-    lv_obj_set_style_bg_color(bub, lv_color_hex(0x201F26), 0);
+    lv_obj_set_style_bg_color(bub, lv_color_hex(0x2A2933), 0);
     lv_obj_set_style_bg_opa(bub, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(bub, 17, 0);
     lv_obj_t *bt = lv_label_create(bub);
     s_bub_text = bt;
     lv_label_set_text(bt, "单击=录音/播放");
-    lv_obj_set_style_text_color(bt, lv_color_hex(0xC8CAD0), 0);
+    lv_obj_set_style_text_color(bt, lv_color_hex(0xFFFFFF), 0);
     lv_obj_center(bt);
 
     lv_screen_load_anim(scr, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, false);
@@ -501,5 +572,5 @@ void mic_recorder_start(void)
     lvgl_port_unlock();
     ESP_LOGI(TAG, "[boot] 录音机界面创建完成");
 
-    ESP_LOGI(TAG, "录音机界面就绪: 单击=录音/播放 (回放增益 x%d, 单段上限 10s)", REC_GAIN);
+    ESP_LOGI(TAG, "录音机就绪: 单击=录音/回放, 长按=歌曲 (增益 x%d, 上限 60s)", REC_GAIN);
 }

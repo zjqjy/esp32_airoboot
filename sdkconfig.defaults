@@ -17,3 +17,9 @@ CONFIG_LV_USE_PERF_MONITOR=y
 
 # S6: 录音机界面中文 (LVGL 内置思源黑体 CJK 字库 (SIMSUN 已弃用), sdkconfig 已同步改)
 CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_16_CJK=y
+
+# S6: rec_16 自定义字库 (GB2312 一级 3755 字, lv_font_conv 压缩位图 + bitmap_index>64KB)
+# 压缩位图必须开解压支持, 否则 lv_font_get_bitmap_fmt_txt 返回 NULL → draw_letter_cb 空指针崩溃重启
+# 位图 ~194KB 超 uint16 上限, 不开 LARGE 则 bitmap_index 截断回绕 → 汉字画错位图(方框)
+CONFIG_LV_USE_FONT_COMPRESSED=y
+CONFIG_LV_FONT_FMT_TXT_LARGE=y

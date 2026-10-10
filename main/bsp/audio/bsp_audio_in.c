@@ -69,13 +69,17 @@ static void mic_task(void *arg)
             uint32_t drop = n - free_n;
             s_tail = (s_tail + drop) & RING_MASK;
             s_overflows += drop;
-            if (s_overflows - s_of_log_mark >= MIC_SAMPLE_RATE) {
-                s_of_log_mark = s_overflows;
-                ESP_LOGW(TAG, "ring overflow, 累计丢 %lu 帧 (消费者太慢)",
-                         (unsigned long)s_overflows);
-            }
         }
+        uint32_t ovf_now = s_overflows;
         taskEXIT_CRITICAL(&s_mux);
+        /* 限频日志必须在临界区外: 关中断下 vprintf 取 stdio 递归锁会被
+         * lock_acquire_generic 判成 ISR 上下文直接 abort
+         * (2026-10-04 上板实录: 录音一溢出打日志即重启) */
+        if (ovf_now - s_of_log_mark >= MIC_SAMPLE_RATE) {
+            s_of_log_mark = ovf_now;
+            ESP_LOGW(TAG, "ring overflow, 累计丢 %lu 帧 (消费者太慢)",
+                     (unsigned long)ovf_now);
+        }
 
         uint32_t h = s_head;
         for (uint32_t i = 0; i < n; i++) {
